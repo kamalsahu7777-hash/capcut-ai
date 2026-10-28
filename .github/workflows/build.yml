@@ -3,9 +3,6 @@ name: Build Windows EXE
 on:
   workflow_dispatch:
 
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-
 jobs:
   build:
     runs-on: windows-latest
@@ -16,7 +13,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -27,11 +24,14 @@ jobs:
       - name: Build Web App
         run: npm run build
 
-      - name: Build Desktop App
-        run: npx tauri build
+      - name: Build Desktop Installer
+        run: npx tauri build --no-bundle-check
+        env:
+          TAURI_SKIP_UPDATE_CHECK: true
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: ClipSync-AI-Installer
           path: src-tauri/target/release/bundle/nsis/*.exe
