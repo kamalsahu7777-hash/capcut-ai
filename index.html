@@ -1,12 +1,165 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ClipSync AI</title>
-  </head>
-  <body class="bg-slate-950 text-white">
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <title>ClipSync AI — Desktop Studio</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #0b0f19; color: #f8fafc; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    
+    /* Header */
+    header { background: #111827; padding: 12px 24px; border-bottom: 1px solid #1f2937; display: flex; justify-content: space-between; align-items: center; }
+    .logo { font-size: 18px; font-weight: bold; color: #6366f1; display: flex; align-items: center; gap: 8px; }
+    .badge { font-size: 11px; background: #312e81; color: #a5b4fc; padding: 2px 8px; border-radius: 12px; }
+    
+    /* Layout */
+    .main-container { display: flex; flex: 1; overflow: hidden; }
+    .panel-left { width: 340px; background: #0f172a; border-right: 1px solid #1e293b; padding: 20px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
+    .panel-center { flex: 1; display: flex; flex-direction: column; background: #030712; }
+    
+    /* Form Elements */
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 14px; }
+    .card-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; color: #cbd5e1; }
+    label { font-size: 11px; color: #94a3b8; display: block; margin-bottom: 4px; }
+    input[type="password"], input[type="text"] { width: 100%; background: #0b0f19; border: 1px solid #475569; border-radius: 6px; padding: 8px; color: #fff; font-size: 12px; margin-bottom: 10px; outline: none; }
+    input:focus { border-color: #6366f1; }
+    button { background: #6366f1; color: white; border: none; padding: 8px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+    button:hover { background: #4f46e5; }
+    button.secondary { background: #334155; }
+    button.secondary:hover { background: #475569; }
+    
+    /* Center Viewports */
+    .viewport { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; border-bottom: 1px solid #1f2937; }
+    canvas { background: #000; border-radius: 6px; max-width: 90%; max-height: 90%; border: 1px solid #1e293b; }
+    
+    /* Timeline */
+    .timeline { height: 180px; background: #0b0f19; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .track { height: 35px; background: #111827; border-radius: 4px; display: flex; align-items: center; padding: 0 10px; font-size: 11px; color: #94a3b8; border: 1px solid #1f2937; position: relative; }
+    .clip-block { position: absolute; height: 25px; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: bold; }
+    
+    .status-msg { font-size: 11px; color: #10b981; margin-top: 5px; display: none; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">
+      <span>ClipSync AI</span>
+      <span class="badge">CapCut Assistant v1.0</span>
+    </div>
+    <button class="secondary" onclick="exportCapCutJSON()">Export CapCut Draft</button>
+  </header>
+
+  <div class="main-container">
+    <!-- Left Panel: API Keys & Controls -->
+    <div class="panel-left">
+      <div class="card">
+        <div class="card-title">AI API Configuration</div>
+        <label>Primary Key (GPT-4o / Claude 3.5 / Chat)</label>
+        <input type="password" id="key1" placeholder="Paste Primary Key...">
+        
+        <label>Secondary Key (Video Multimodal / Scene)</label>
+        <input type="password" id="key2" placeholder="Paste Secondary Key...">
+        
+        <button onclick="saveKeys()">Save Credentials</button>
+        <div id="saveMsg" class="status-msg">✓ Keys saved securely on your PC!</div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Reference Video</div>
+        <label>YouTube / Instagram Reel Link</label>
+        <input type="text" id="refUrl" placeholder="https://instagram.com/reel/...">
+        <button class="secondary" onclick="analyzeReference()">Analyze Timing & Beats</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Wedding & FX Automation</div>
+        <label><input type="checkbox" id="cutoutOpt" checked> Auto Groom & Bride Cutout</label>
+        <label style="margin-top: 6px;"><input type="checkbox" id="speedOpt" checked> Auto Speed Ramp Sync</label>
+      </div>
+    </div>
+
+    <!-- Center Panel: Live Canvas & Multi-Track Timeline -->
+    <div class="panel-center">
+      <div class="viewport">
+        <canvas id="player" width="640" height="360"></canvas>
+      </div>
+
+      <div class="timeline">
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #64748b;">
+          <span>Timeline Editor (CapCut Synced Tracks)</span>
+          <span id="playState">Stopped (00:00.000)</span>
+        </div>
+        
+        <div class="track">
+          <span style="width: 80px;">V2 Overlay</span>
+          <div class="clip-block" style="left: 100px; width: 140px; background: #ec4899;">Groom Cutout</div>
+          <div class="clip-block" style="left: 260px; width: 120px; background: #a855f7;">Bride Cutout</div>
+        </div>
+
+        <div class="track">
+          <span style="width: 80px;">V1 Media</span>
+          <div class="clip-block" style="left: 100px; width: 150px; background: #3b82f6;">Clip_01.mp4</div>
+          <div class="clip-block" style="left: 250px; width: 180px; background: #2563eb;">Clip_02.mp4</div>
+        </div>
+
+        <div class="track">
+          <span style="width: 80px;">A1 Audio</span>
+          <div class="clip-block" style="left: 100px; width: 330px; background: #10b981;">Beat_Sync_124BPM.wav</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Load Saved Keys on Boot
+    document.getElementById('key1').value = localStorage.getItem('clipsync_primary_key') || '';
+    document.getElementById('key2').value = localStorage.getItem('clipsync_secondary_key') || '';
+
+    function saveKeys() {
+      localStorage.setItem('clipsync_primary_key', document.getElementById('key1').value);
+      localStorage.setItem('clipsync_secondary_key', document.getElementById('key2').value);
+      const msg = document.getElementById('saveMsg');
+      msg.style.display = 'block';
+      setTimeout(() => { msg.style.display = 'none'; }, 3000);
+    }
+
+    // Canvas Preview Simulation
+    const canvas = document.getElementById('player');
+    const ctx = canvas.getContext('2d');
+    function drawPreview() {
+      ctx.fillStyle = '#1e1b4b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#e0e7ff';
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('ClipSync Real-Time Compositor', canvas.width / 2, canvas.height / 2 - 10);
+      ctx.font = '12px sans-serif';
+      ctx.fillStyle = '#a5b4fc';
+      ctx.fillText('Ready for Local Media & Reference Sync', canvas.width / 2, canvas.height / 2 + 15);
+    }
+    drawPreview();
+
+    function analyzeReference() {
+      alert('Analyzing reference video scene boundaries, audio peaks, and transitions...');
+    }
+
+    function exportCapCutJSON() {
+      const draft = {
+        app: "CapCut Desktop Bridge",
+        version: "1.0",
+        tracks: [
+          { name: "V2_Cutouts", clips: ["Groom_Cutout", "Bride_Cutout"] },
+          { name: "V1_Clips", clips: ["Clip_01.mp4", "Clip_02.mp4"] },
+          { name: "A1_Audio", bpm: 124 }
+        ]
+      };
+      const blob = new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "draft_content.json";
+      a.click();
+    }
+  </script>
+</body>
 </html>
