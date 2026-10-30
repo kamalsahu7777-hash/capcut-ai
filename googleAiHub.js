@@ -61,7 +61,7 @@ class GoogleAiHub {
     });
   }
 
-    classifyFamily(modelId) {
+  classifyFamily(modelId) {
     const id = modelId.toLowerCase();
     if (id.includes('embedding')) return 'Embedding';
     if (id.includes('pro')) return 'Gemini Pro';
@@ -71,13 +71,15 @@ class GoogleAiHub {
   async executeTask({ apiKey, modelId, systemPrompt, userPrompt, mediaParts = [] }) {
     let targetModel = modelId;
     
-    // Agar modelId invalid ya hardcoded hai, toh live discover karke pehla valid model utha lo
-    if (!targetModel || targetModel.includes('1.5') || targetModel.includes('2.5') || targetModel.includes('3.8')) {
+    // Agar modelId pass nahi hua ya purana/deprecated hai, toh live list se pehla active model nikal lo
+    if (!targetModel || targetModel.includes('2.5') || targetModel.includes('3.8') || targetModel.includes('1.5')) {
       const discovery = await this.discoverModels(apiKey);
       if (discovery.success && discovery.models.length > 0) {
-        const validModel = discovery.models.find(m => m.capabilities.generateContent);
+        const validModel = discovery.models.find(m => m.capabilities.generateContent && m.capabilities.videoUnderstanding);
         if (validModel) {
           targetModel = validModel.id;
+        } else {
+          targetModel = discovery.models[0].id;
         }
       }
     }
