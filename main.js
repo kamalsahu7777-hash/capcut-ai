@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
 const googleAiHub = require('./googleAiHub');
 
 let mainWindow;
@@ -89,15 +90,56 @@ ipcMain.handle('hub-discover-models', async (event, { apiKey }) => {
 });
 
 ipcMain.handle('hub-execute-task', async (event, payload) => {
-  // Safe default model fallback for all accounts
-  if (!payload.modelId || payload.modelId.includes('2.5') || payload.modelId.includes('3.8')) {
-    payload.modelId = 'gemini-1.5-flash';
-  }
   return await googleAiHub.executeTask(payload);
 });
 
-ipcMain.handle('hub-query-gemma', async (event, { prompt, endpoint }) => {
-  return await googleAiHub.queryLocalGemma(prompt, endpoint);
+// AUTO DOWNLOAD VIA YT-DLP INTEGRATION
+ipcMain.handle('download-reference-video', async (event, { url }) => {
+  return new Promise((resolve) => {
+    if (!url) return resolve({ success: false, error: 'URL is missing.' });
+
+    const tempDir = path.join(app.getPath('temp'), 'clipsync_downloads');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+    const outputTemplate = path.join(tempDir, '%(id)s.%(ext)s');
+    // yt-dlp command to download best mp4 format
+    const command = `yt-dlp -f "best[ext=mp4]/best" -o "${outputTemplate}" "${url}"`;
+
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        return resolve({ 
+          success: false, 
+          error: 'yt-dlp download failed. Make sure yt-dlp is installed on your Windows PC path. Error: ' + error.message 
+        });
+      }
+
+      // Extract downloaded file path from stdout or scan temp dir
+      try {
+        const files = fs.readdirSync(tempDir).map(file => ({
+          name: file,
+          fullPath: path.join(tempDir, file),
+          time: fs.statSync(path.join(tempDir, file)).mtimeMs
+        })).sort((a, b) => b.time - a.time);
+
+        if (files.length > 0) {
+          const latestFile = files[0];
+          const stats = fs.statSync(latestFile.fullPath);
+          resolve({
+            success: true,
+            file: {
+              name: latestFile.name,
+              fullPath: latestFile.fullPath,
+              sizeBytes: stats.size
+            }
+          });
+        } else {
+          resolve({ success: false, error: 'Downloaded file not found in temp directory.' });
+        }
+      } catch (err) {
+        resolve({ success: false, error: 'File resolution error: ' + err.message });
+      }
+    });
+  });
 });
 
 ipcMain.handle('launch-google-flow', async () => {
