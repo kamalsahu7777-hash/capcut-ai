@@ -32,7 +32,7 @@
       const [tokenUsage, setTokenUsage] = useState(null);
 
       const [routerConfig, setRouterConfig] = useState({
-        videoAnalysisModel: 'gemini-1.5-flash',
+        videoAnalysisModel: 'gemini-3.8-flash',
         vfxInstructionModel: 'gemini-1.5-flash',
         embeddingModel: '',
         useLocalGemma: false
@@ -143,7 +143,7 @@
           }
         }
 
-        const targetModel = routerConfig.videoAnalysisModel || 'gemini-1.5-flash';
+        const targetModel = routerConfig.videoAnalysisModel || 'gemini-3.8-flash';
 
         const systemPrompt = `You are Google AI Video VFX Analyzer. Analyze the provided video timing and create a precise list of visual effects for CapCut recreation.
 Return ONLY valid JSON matching this schema:
