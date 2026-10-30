@@ -92,6 +92,10 @@ ipcMain.handle('hub-discover-models', async (event, { apiKey }) => {
 });
 
 ipcMain.handle('hub-execute-task', async (event, payload) => {
+  // Default fallback update to gemini-3.8-flash
+  if (!payload.modelId) {
+    payload.modelId = 'gemini-3.8-flash';
+  }
   return await googleAiHub.executeTask(payload);
 });
 
@@ -101,12 +105,11 @@ ipcMain.handle('hub-query-gemma', async (event, { prompt, endpoint }) => {
 
 // 3. Google Flow Bridge
 ipcMain.handle('launch-google-flow', async () => {
-  // Official Filmmaking Studio URL
   shell.openExternal('https://labs.google/flow');
   return { success: true, message: 'Google Flow Studio opened in browser.' };
 });
 
-// 4. File System Scanners (Preserved from existing setup)
+// 4. File System Scanners
 function scanDirectory(dirPath, recursive = true, foundFiles = []) {
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
