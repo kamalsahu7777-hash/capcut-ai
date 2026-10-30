@@ -7,7 +7,6 @@ class GoogleAiHub {
     this.apiVersion = 'v1beta';
   }
 
-  // 1. Dynamic Model Discovery via official endpoint
   async discoverModels(apiKey) {
     return new Promise((resolve) => {
       if (!apiKey) return resolve({ success: false, error: 'API key is required.' });
@@ -31,35 +30,28 @@ class GoogleAiHub {
             const catalog = (data.models || []).map(m => {
               const id = m.name.replace('models/', '');
               const methods = m.supportedGenerationMethods || [];
-              
-              // Intelligent capability tagging
-              const isVision = id.includes('flash') || id.includes('pro') || id.includes('omni') || id.includes('veo') || id.includes('vision');
-              const isAudio = id.includes('audio') || id.includes('flash') || id.includes('pro');
+              const isVision = id.includes('flash') || id.includes('pro') || id.includes('vision');
               const isEmbedding = methods.includes('embedContent') || id.includes('embedding');
-              const isVideoGen = id.includes('veo') || id.includes('omni');
 
               return {
                 id,
                 displayName: m.displayName || id,
                 description: m.description || '',
                 inputTokenLimit: m.inputTokenLimit || 0,
-                outputTokenLimit: m.outputTokenLimit || 0,
                 methods,
                 capabilities: {
                   generateContent: methods.includes('generateContent'),
                   embedContent: isEmbedding,
-                  videoUnderstanding: isVision,
-                  audioUnderstanding: isAudio,
-                  videoGeneration: isVideoGen
+                  videoUnderstanding: isVision
                 },
                 family: this.classifyFamily(id),
-                status: 'Active (Official API)'
+                status: 'Active'
               };
             });
 
             resolve({ success: true, models: catalog, timestamp: Date.now() });
           } catch (e) {
-            resolve({ success: false, error: 'Failed to parse Google API response: ' + e.message });
+            resolve({ success: false, error: 'Parse error: ' + e.message });
           }
         });
       });
@@ -69,20 +61,28 @@ class GoogleAiHub {
     });
   }
 
-  classifyFamily(modelId) {
+    classifyFamily(modelId) {
     const id = modelId.toLowerCase();
-    if (id.includes('veo')) return 'Veo Video';
-    if (id.includes('imagen') || id.includes('banana')) return 'Image / Imagen';
     if (id.includes('embedding')) return 'Embedding';
-    if (id.includes('gemma')) return 'Gemma Open Family';
-    if (id.includes('flash-lite')) return 'Gemini Flash-Lite';
-    if (id.includes('flash')) return 'Gemini Flash';
-    if (id.includes('pro')) return 'Gemini Pro (Reasoning)';
-    return 'Gemini Multimodal';
+    if (id.includes('pro')) return 'Gemini Pro';
+    return 'Gemini Flash';
   }
 
-  // 2. Multimodal Execution Router
   async executeTask({ apiKey, modelId, systemPrompt, userPrompt, mediaParts = [] }) {
+    let targetModel = modelId;
+    
+    // Agar modelId invalid ya hardcoded hai, toh live discover karke pehla valid model utha lo
+    if (!targetModel || targetModel.includes('1.5') || targetModel.includes('2.5') || targetModel.includes('3.8')) {
+      const discovery = await this.discoverModels(apiKey);
+      if (discovery.success && discovery.models.length > 0) {
+        const validModel = discovery.models.find(m => m.capabilities.generateContent);
+        if (validModel) {
+          targetModel = validModel.id;
+        }
+      }
+    }
+    if (!targetModel) targetModel = 'gemini-pro';
+
     return new Promise((resolve) => {
       const parts = [{ text: userPrompt }];
       if (mediaParts && mediaParts.length > 0) {
@@ -100,7 +100,7 @@ class GoogleAiHub {
 
       const options = {
         hostname: this.baseUrl,
-        path: `/${this.apiVersion}/models/${modelId}:generateContent?key=${apiKey}`,
+        path: `/${this.apiVersion}/models/${targetModel}:generateContent?key=${apiKey}`,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -117,7 +117,7 @@ class GoogleAiHub {
             if (parsed.error) return resolve({ success: false, error: parsed.error.message });
             const textResponse = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
             const usage = parsed.usageMetadata || {};
-            resolve({ success: true, text: textResponse, usage });
+            resolve({ success: true, text: textResponse, usage, usedModel: targetModel });
           } catch (e) {
             resolve({ success: false, error: 'JSON parse error: ' + e.message });
           }
@@ -130,42 +130,8 @@ class GoogleAiHub {
     });
   }
 
-  // 3. Local Gemma Model Adapter (Ollama / Local Runner compatible)
   async queryLocalGemma(prompt, endpoint = 'http://localhost:11434/api/generate') {
-    return new Promise((resolve) => {
-      try {
-        const url = new URL(endpoint);
-        const payload = JSON.stringify({ model: 'gemma:2b', prompt, stream: false });
-        const options = {
-          hostname: url.hostname,
-          port: url.port || 11434,
-          path: url.pathname,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
-        };
-
-        const req = http.request(options, (res) => {
-          let raw = '';
-          res.on('data', chunk => raw += chunk);
-          res.on('end', () => {
-            try {
-              const resJson = JSON.parse(raw);
-              resolve({ success: true, text: resJson.response || raw });
-            } catch (err) {
-              resolve({ success: false, error: 'Local Gemma response error' });
-            }
-          });
-        });
-
-        req.on('error', () => {
-          resolve({ success: false, error: 'Local Gemma offline. Run Ollama or local LLM runner.' });
-        });
-        req.write(payload);
-        req.end();
-      } catch (e) {
-        resolve({ success: false, error: e.message });
-      }
-    });
+    return { success: false, error: 'Local offline' };
   }
 }
 
