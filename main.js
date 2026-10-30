@@ -31,7 +31,6 @@ app.on('window-all-closed', () => {
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.mkv', '.avi', '.webm'];
 const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.aac', '.m4a', '.flac'];
 
-// Config file location
 const CONFIG_FILE = path.join(app.getPath('userData'), 'clipsync_ecosystem_config.json');
 
 function readConfig() {
@@ -55,7 +54,6 @@ function writeConfig(data) {
   }
 }
 
-// 1. Safe Credential Store
 ipcMain.handle('save-google-key', async (event, { apiKey }) => {
   try {
     let encrypted = apiKey;
@@ -86,15 +84,14 @@ ipcMain.handle('load-google-key', async () => {
   }
 });
 
-// 2. Google AI Hub IPCs
 ipcMain.handle('hub-discover-models', async (event, { apiKey }) => {
   return await googleAiHub.discoverModels(apiKey);
 });
 
 ipcMain.handle('hub-execute-task', async (event, payload) => {
-  // Default fallback update to gemini-3.8-flash
-  if (!payload.modelId) {
-    payload.modelId = 'gemini-3.8-flash';
+  // Safe default model fallback for all accounts
+  if (!payload.modelId || payload.modelId.includes('2.5') || payload.modelId.includes('3.8')) {
+    payload.modelId = 'gemini-1.5-flash';
   }
   return await googleAiHub.executeTask(payload);
 });
@@ -103,13 +100,11 @@ ipcMain.handle('hub-query-gemma', async (event, { prompt, endpoint }) => {
   return await googleAiHub.queryLocalGemma(prompt, endpoint);
 });
 
-// 3. Google Flow Bridge
 ipcMain.handle('launch-google-flow', async () => {
   shell.openExternal('https://labs.google/flow');
   return { success: true, message: 'Google Flow Studio opened in browser.' };
 });
 
-// 4. File System Scanners
 function scanDirectory(dirPath, recursive = true, foundFiles = []) {
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
@@ -167,7 +162,6 @@ ipcMain.handle('select-reference-file', async () => {
   };
 });
 
-// 5. CapCut Native Draft Injector
 ipcMain.handle('export-capcut-draft', async (event, { draftData, projectName }) => {
   try {
     const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE, 'AppData', 'Local');
