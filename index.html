@@ -1,4 +1,126 @@
-const handleAnalyzeEffects = async () => {
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ClipSync AI — Google AI Studio Hub & Desktop Editor</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #05070d; color: #f1f5f9; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #0b0f19; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+    .split-canvas { background: #000; border: 1px solid #1e293b; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null };
+
+    function App() {
+      const [currentTab, setCurrentTab] = useState('hub');
+      const [apiKey, setApiKey] = useState('');
+      const [modelCatalog, setModelCatalog] = useState([]);
+      const [catalogSearch, setCatalogSearch] = useState('');
+      const [hubStatus, setHubStatus] = useState({ text: 'Not Connected', ok: false });
+      const [isDiscovering, setIsDiscovering] = useState(false);
+      const [tokenUsage, setTokenUsage] = useState(null);
+
+      const [routerConfig, setRouterConfig] = useState({
+        videoAnalysisModel: 'gemini-1.5-flash',
+        vfxInstructionModel: 'gemini-1.5-flash',
+        embeddingModel: '',
+        useLocalGemma: false
+      });
+
+      const [folders, setFolders] = useState([]);
+      const [importedFiles, setImportedFiles] = useState([]);
+      const [includeSubfolders, setIncludeSubfolders] = useState(true);
+
+      const [refVideo, setRefVideo] = useState(null);
+      const [refUrl, setRefUrl] = useState('');
+      const [analyzingVfx, setAnalyzingVfx] = useState(false);
+      const [detectedVfx, setDetectedVfx] = useState([]);
+      const [activeVfxIndex, setActiveVfxIndex] = useState(0);
+
+      const previewCanvasRef = useRef(null);
+      const [isPlaying, setIsPlaying] = useState(false);
+      const [playbackTime, setPlaybackTime] = useState(0.0);
+
+      useEffect(() => {
+        if (ipcRenderer) {
+          ipcRenderer.invoke('load-google-key').then(res => {
+            if (res.success && res.apiKey) {
+              setApiKey(res.apiKey);
+              discoverGoogleModels(res.apiKey);
+            }
+          });
+        }
+      }, []);
+
+      const discoverGoogleModels = async (keyToUse) => {
+        const key = keyToUse || apiKey;
+        if (!key) return;
+        setIsDiscovering(true);
+        setHubStatus({ text: 'Fetching Official Google Catalog...', ok: false });
+
+        if (ipcRenderer) {
+          const res = await ipcRenderer.invoke('hub-discover-models', { apiKey: key });
+          if (res.success && res.models.length > 0) {
+            setModelCatalog(res.models);
+            setHubStatus({ text: `Connected: ${res.models.length} Official Models Active`, ok: true });
+
+            const flashModel = res.models.find(m => m.id.includes('flash') && !m.id.includes('lite')) || res.models[0];
+            const proModel = res.models.find(m => m.id.includes('pro')) || flashModel;
+            const embedModel = res.models.find(m => m.capabilities.embedContent) || { id: 'text-embedding-004' };
+
+            setRouterConfig(prev => ({
+              ...prev,
+              videoAnalysisModel: flashModel.id || 'gemini-1.5-flash',
+              vfxInstructionModel: proModel.id || 'gemini-1.5-flash',
+              embeddingModel: embedModel.id
+            }));
+          } else {
+            setHubStatus({ text: `Connection Failed: ${res.error || 'Check key & network'}`, ok: false });
+          }
+        }
+        setIsDiscovering(false);
+      };
+
+      const handleSaveKey = async () => {
+        if (!ipcRenderer) return;
+        await ipcRenderer.invoke('save-google-key', { apiKey });
+        discoverGoogleModels(apiKey);
+      };
+
+      const handleImportFolders = async () => {
+        if (!ipcRenderer) return;
+        const res = await ipcRenderer.invoke('select-folders', { includeSubfolders });
+        if (!res.canceled && res.folders.length > 0) {
+          let newFiles = [];
+          res.folders.forEach(f => newFiles.push(...f.files));
+          const existing = new Set(importedFiles.map(x => x.fullPath));
+          const unique = newFiles.filter(x => !existing.has(x.fullPath));
+          setFolders(prev => [...prev, ...res.folders]);
+          setImportedFiles(prev => [...prev, ...unique]);
+        }
+      };
+
+      const handlePickRefFile = async () => {
+        if (!ipcRenderer) return;
+        const res = await ipcRenderer.invoke('select-reference-file');
+        if (!res.canceled && res.file) {
+          setRefVideo(res.file);
+          setRefUrl(res.file.name);
+        }
+      };
+
+      const handleAnalyzeEffects = async () => {
         if (!apiKey) {
           setCurrentTab('hub');
           alert('Pehle Google AI Hub mein API key connect kijiye!');
@@ -8,7 +130,6 @@ const handleAnalyzeEffects = async () => {
         setAnalyzingVfx(true);
         let videoToAnalyze = refVideo;
 
-        // Agar local file select nahi hai aur link diya hai, toh yt-dlp se download karo
         if (!videoToAnalyze && refUrl && ipcRenderer) {
           alert('Downloading reference video via yt-dlp...');
           const dlRes = await ipcRenderer.invoke('download-reference-video', { url: refUrl });
@@ -22,7 +143,7 @@ const handleAnalyzeEffects = async () => {
           }
         }
 
-        const targetModel = routerConfig.videoAnalysisModel || 'gemini-2.5-flash';
+        const targetModel = routerConfig.videoAnalysisModel || 'gemini-1.5-flash';
 
         const systemPrompt = `You are Google AI Video VFX Analyzer. Analyze the provided video timing and create a precise list of visual effects for CapCut recreation.
 Return ONLY valid JSON matching this schema:
@@ -70,3 +191,364 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
         }
         setAnalyzingVfx(false);
       };
+
+      const handleLaunchFlow = async () => {
+        if (ipcRenderer) {
+          await ipcRenderer.invoke('launch-google-flow');
+        }
+      };
+
+      const handleInjectCapCut = async () => {
+        if (!ipcRenderer) return;
+        if (detectedVfx.length === 0) {
+          alert('Pehle Google AI se effects analyze kijiye!');
+          return;
+        }
+
+        const draftData = {
+          app_version: "5.0.0",
+          platform: "windows",
+          tracks: [
+            {
+              id: "track_google_ai_replicated",
+              type: "video",
+              segments: detectedVfx.map((v, i) => ({
+                id: `seg_${i}`,
+                target_timerange: {
+                  start: Math.round(v.timestampStart * 1000000),
+                  duration: Math.round((v.timestampEnd - v.timestampStart) * 1000000)
+                },
+                effect_name: v.effectType,
+                capcut_preset: v.capcutTransitionId,
+                vfx_parameters: v.parameters
+              }))
+            }
+          ]
+        };
+
+        const res = await ipcRenderer.invoke('export-capcut-draft', {
+          draftData,
+          projectName: 'ClipSync_GoogleVFX_Draft'
+        });
+
+        alert(res.success ? res.message : 'Error: ' + res.error);
+      };
+
+      useEffect(() => {
+        const canvas = previewCanvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        let frame;
+
+        const render = () => {
+          ctx.fillStyle = '#06080f';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          const cur = detectedVfx[activeVfxIndex];
+          const scale = cur ? cur.parameters.scale : 1.0;
+          const shake = cur ? cur.parameters.shakeIntensity : 0.0;
+
+          ctx.save();
+          if (shake > 0) {
+            ctx.translate((Math.random() - 0.5) * shake * 12, (Math.random() - 0.5) * shake * 12);
+          }
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.scale(scale, scale);
+          ctx.translate(-canvas.width / 2, -canvas.height / 2);
+
+          ctx.fillStyle = '#101625';
+          ctx.fillRect(30, 20, canvas.width - 60, canvas.height - 40);
+
+          ctx.fillStyle = '#6366f1';
+          ctx.font = 'bold 15px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(
+            cur ? `Google AI VFX: ${cur.effectType}` : 'No Effect Loaded',
+            canvas.width / 2,
+            canvas.height / 2 - 8
+          );
+
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '11px sans-serif';
+          ctx.fillText(
+            cur ? `Scale: ${scale.toFixed(2)}x | CapCut ID: ${cur.capcutTransitionId}` : 'Select a reference clip to analyze',
+            canvas.width / 2,
+            canvas.height / 2 + 14
+          );
+
+          ctx.restore();
+
+          if (isPlaying) {
+            setPlaybackTime(p => (p + 0.03 > 10 ? 0 : p + 0.03));
+          }
+          frame = requestAnimationFrame(render);
+        };
+        render();
+        return () => cancelAnimationFrame(frame);
+      }, [isPlaying, detectedVfx, activeVfxIndex]);
+
+      const filteredModels = modelCatalog.filter(m =>
+        m.id.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+        m.displayName.toLowerCase().includes(catalogSearch.toLowerCase()) ||
+        m.family.toLowerCase().includes(catalogSearch.toLowerCase())
+      );
+
+      return (
+        <div className="flex flex-col h-screen text-xs select-none">
+          <header className="h-12 bg-[#0a0d16] border-b border-gray-800 flex items-center justify-between px-4">
+            <div className="flex items-center gap-3">
+              <span className="font-extrabold text-indigo-400 text-sm tracking-wider">CLIPSYNC AI</span>
+              <span className="bg-indigo-950 text-indigo-300 border border-indigo-800 px-2 py-0.5 rounded text-[10px]">
+                Google AI Ecosystem Studio
+              </span>
+            </div>
+
+            <div className="flex bg-[#101524] p-0.5 rounded border border-gray-800">
+              <button 
+                onClick={() => setCurrentTab('hub')} 
+                className={`px-3 py-1 rounded font-semibold transition ${currentTab === 'hub' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                🌐 Google AI Hub
+              </button>
+              <button 
+                onClick={() => setCurrentTab('vfx')} 
+                className={`px-3 py-1 rounded font-semibold transition ${currentTab === 'vfx' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                ⚡ VFX Studio
+              </button>
+              <button 
+                onClick={() => setCurrentTab('compare')} 
+                className={`px-3 py-1 rounded font-semibold transition ${currentTab === 'compare' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                ⚖️ Split Compare
+              </button>
+              <button 
+                onClick={() => setCurrentTab('flow')} 
+                className={`px-3 py-1 rounded font-semibold transition ${currentTab === 'flow' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                🎬 Google Flow Bridge
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className={`px-2 py-1 rounded text-[10px] font-semibold border ${hubStatus.ok ? 'bg-emerald-950 text-emerald-300 border-emerald-800' : 'bg-rose-950 text-rose-300 border-rose-900'}`}>
+                {hubStatus.text}
+              </span>
+              <button 
+                onClick={handleInjectCapCut} 
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded shadow">
+                ⚡ Inject to CapCut
+              </button>
+            </div>
+          </header>
+
+          {currentTab === 'hub' && (
+            <div className="flex flex-1 overflow-hidden p-4 gap-4 bg-[#05070d]">
+              <div className="w-96 flex flex-col gap-4">
+                <div className="bg-[#0e1322] border border-gray-800 rounded-lg p-3.5 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="font-bold text-gray-200">Google AI Credentials</span>
+                    <span className="text-[10px] text-gray-400">Secure Local Vault</span>
+                  </div>
+                  <input 
+                    type="password"
+                    placeholder="Enter Google API Key (AIzaSy...)"
+                    value={apiKey}
+                    onChange={e => setApiKey(e.target.value)}
+                    className="w-full bg-[#070912] border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleSaveKey}
+                      className="flex-1 bg-indigo-600 hover:bg-indigo-500 font-bold py-1.5 rounded text-white">
+                      Save & Test Key
+                    </button>
+                    <button 
+                      onClick={() => discoverGoogleModels(apiKey)}
+                      disabled={isDiscovering}
+                      className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded border border-gray-700">
+                      {isDiscovering ? 'Scanning...' : '🔄 Refresh Models'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-[#0e1322] border border-gray-800 rounded-lg p-3.5 space-y-3 flex-1 flex flex-col">
+                  <span className="font-bold text-gray-200">AI Model Task Router</span>
+                  <div className="space-y-2.5 flex-1">
+                    <div>
+                      <label className="text-[10px] text-gray-400 block mb-1">Video Understanding & VFX Analysis</label>
+                      <select 
+                        value={routerConfig.videoAnalysisModel}
+                        onChange={e => setRouterConfig({...routerConfig, videoAnalysisModel: e.target.value})}
+                        className="w-full bg-[#070912] border border-gray-700 rounded px-2 py-1 text-white">
+                        {modelCatalog.map(m => (
+                          <option key={m.id} value={m.id}>{m.displayName} ({m.family})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 bg-[#0e1322] border border-gray-800 rounded-lg p-3.5 flex flex-col gap-3">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <span className="font-bold text-gray-200">Official Google Model Catalog</span>
+                    <span className="text-[10px] text-gray-400 ml-2">({modelCatalog.length} Discovered via API)</span>
+                  </div>
+                  <input 
+                    type="text"
+                    placeholder="Search family or model ID..."
+                    value={catalogSearch}
+                    onChange={e => setCatalogSearch(e.target.value)}
+                    className="bg-[#070912] border border-gray-700 rounded px-2.5 py-1 text-xs text-white w-64"
+                  />
+                </div>
+
+                <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                  {filteredModels.map(m => (
+                    <div key={m.id} className="p-2.5 bg-[#080b13] border border-gray-800 rounded-lg flex justify-between items-center">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white">{m.displayName}</span>
+                          <span className="text-[9px] font-mono bg-indigo-950 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-900">
+                            {m.family}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-gray-400 max-w-xl truncate">{m.description || 'Google Generative Language Model'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {currentTab === 'vfx' && (
+            <div className="flex flex-1 overflow-hidden">
+              <div className="w-80 bg-[#090d16] border-r border-gray-800 flex flex-col p-3 gap-3 overflow-y-auto">
+                <span className="font-bold text-gray-200">Reference Video & Audio</span>
+                <div className="p-2 bg-[#0e1424] rounded border border-gray-800 space-y-2">
+                  <input 
+                    type="text"
+                    placeholder="Paste YouTube / Instagram Link"
+                    value={refUrl}
+                    onChange={e => setRefUrl(e.target.value)}
+                    className="w-full bg-[#05070d] border border-gray-700 rounded px-2 py-1.5 text-xs text-white"
+                  />
+                  <div className="flex gap-2">
+                    <button onClick={handlePickRefFile} className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-200 py-1 rounded">
+                      Local File
+                    </button>
+                    <button 
+                      onClick={handleAnalyzeEffects}
+                      disabled={analyzingVfx}
+                      className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-1 rounded">
+                      {analyzingVfx ? 'Analyzing...' : 'Analyze VFX'}
+                    </button>
+                  </div>
+                  {refVideo && <div className="text-[10px] text-emerald-400 font-mono">Loaded: {refVideo.name}</div>}
+                </div>
+
+                <div className="flex justify-between items-center pt-2">
+                  <span className="font-bold text-gray-200">Local Project Folders</span>
+                  <span className="text-[10px] text-gray-400">{importedFiles.length} clips</span>
+                </div>
+                <button onClick={handleImportFolders} className="w-full bg-slate-800 hover:bg-slate-700 text-gray-200 py-1.5 rounded border border-gray-700">
+                  📂 Import User PC Media
+                </button>
+                <div className="flex-1 overflow-y-auto space-y-1">
+                  {importedFiles.map((f, i) => (
+                    <div key={i} className="p-1.5 bg-[#0e1424] rounded text-[10px] text-gray-300 truncate">
+                      {f.name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 flex flex-col bg-[#05070d]">
+                <div className="flex-1 flex flex-col items-center justify-center p-3">
+                  <canvas ref={previewCanvasRef} width={640} height={340} className="split-canvas shadow-2xl"></canvas>
+                  <div className="flex items-center gap-3 mt-3">
+                    <button 
+                      onClick={() => setIsPlaying(!isPlaying)}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-1.5 rounded-full">
+                      {isPlaying ? '⏸ Pause' : '▶ Play VFX Simulation'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="h-40 bg-[#080b13] border-t border-gray-800 p-2 flex flex-col justify-between">
+                  <div className="flex justify-between text-[10px] text-gray-400">
+                    <span>GOOGLE AI REPLICATED EFFECTS TIMELINE</span>
+                    <span>Total Nodes: {detectedVfx.length}</span>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto py-2">
+                    {detectedVfx.map((v, i) => (
+                      <div 
+                        key={i} 
+                        onClick={() => setActiveVfxIndex(i)}
+                        className={`h-16 min-w-[140px] p-2 rounded cursor-pointer border flex flex-col justify-between ${activeVfxIndex === i ? 'bg-indigo-950 border-indigo-400' : 'bg-[#0f1526] border-gray-800'}`}>
+                        <div className="flex justify-between text-[10px]">
+                          <span className="font-bold text-white truncate">{v.effectType}</span>
+                          <span className="text-emerald-400">{v.timestampStart}s</span>
+                        </div>
+                        <div className="text-[9px] text-indigo-300 truncate">{v.capcutTransitionId}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="w-80 bg-[#090d16] border-l border-gray-800 p-3 space-y-3 overflow-y-auto">
+                <span className="font-bold text-gray-200">Parametric Effect Controls</span>
+                {detectedVfx[activeVfxIndex] ? (
+                  <div className="space-y-3 bg-[#0e1424] p-3 rounded border border-gray-800">
+                    <div>
+                      <span className="text-indigo-400 font-bold block">{detectedVfx[activeVfxIndex].effectType}</span>
+                      <span className="text-[10px] text-gray-400">CapCut ID: {detectedVfx[activeVfxIndex].capcutTransitionId}</span>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[10px] mb-1 text-gray-400">
+                        <span>Zoom Scale</span>
+                        <span className="text-white">{detectedVfx[activeVfxIndex].parameters.scale}x</span>
+                      </div>
+                      <input 
+                        type="range" min="1.0" max="2.5" step="0.05"
+                        value={detectedVfx[activeVfxIndex].parameters.scale}
+                        onChange={e => {
+                          const c = [...detectedVfx];
+                          c[activeVfxIndex].parameters.scale = parseFloat(e.target.value);
+                          setDetectedVfx(c);
+                        }}
+                        className="w-full accent-indigo-500"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-gray-500 text-center py-10">Select or analyze a clip first.</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {currentTab === 'flow' && (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#05070d]">
+              <div className="max-w-md bg-[#0e1322] border border-gray-800 rounded-xl p-6 text-center space-y-4 shadow-2xl">
+                <span className="text-2xl block">🎬</span>
+                <h3 className="font-bold text-base text-gray-100">Google Flow Filmmaking Studio</h3>
+                <div className="flex flex-col gap-2 pt-2">
+                  <button 
+                    onClick={handleLaunchFlow}
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 font-bold py-2 rounded text-white">
+                    🚀 Launch Google Flow in Browser
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
