@@ -23,10 +23,7 @@
     const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null };
 
     function App() {
-      // 1. Navigation
-      const [currentTab, setCurrentTab] = useState('hub'); // 'hub' | 'vfx' | 'compare' | 'flow'
-
-      // 2. Google AI Hub & Credentials
+      const [currentTab, setCurrentTab] = useState('hub');
       const [apiKey, setApiKey] = useState('');
       const [modelCatalog, setModelCatalog] = useState([]);
       const [catalogSearch, setCatalogSearch] = useState('');
@@ -34,32 +31,27 @@
       const [isDiscovering, setIsDiscovering] = useState(false);
       const [tokenUsage, setTokenUsage] = useState(null);
 
-      // 3. Smart Task Router State
       const [routerConfig, setRouterConfig] = useState({
-        videoAnalysisModel: '',
-        vfxInstructionModel: '',
+        videoAnalysisModel: 'gemini-3.8-flash',
+        vfxInstructionModel: 'gemini-3.8-flash',
         embeddingModel: '',
         useLocalGemma: false
       });
 
-      // 4. Media & Folders
       const [folders, setFolders] = useState([]);
       const [importedFiles, setImportedFiles] = useState([]);
       const [includeSubfolders, setIncludeSubfolders] = useState(true);
 
-      // 5. Reference & VFX Replication State
       const [refVideo, setRefVideo] = useState(null);
       const [refUrl, setRefUrl] = useState('');
       const [analyzingVfx, setAnalyzingVfx] = useState(false);
       const [detectedVfx, setDetectedVfx] = useState([]);
       const [activeVfxIndex, setActiveVfxIndex] = useState(0);
 
-      // Canvas preview
       const previewCanvasRef = useRef(null);
       const [isPlaying, setIsPlaying] = useState(false);
       const [playbackTime, setPlaybackTime] = useState(0.0);
 
-      // Load API Key on Startup
       useEffect(() => {
         if (ipcRenderer) {
           ipcRenderer.invoke('load-google-key').then(res => {
@@ -71,7 +63,6 @@
         }
       }, []);
 
-      // Dynamic Model Discovery from Official API
       const discoverGoogleModels = async (keyToUse) => {
         const key = keyToUse || apiKey;
         if (!key) return;
@@ -84,15 +75,14 @@
             setModelCatalog(res.models);
             setHubStatus({ text: `Connected: ${res.models.length} Official Models Active`, ok: true });
 
-            // Auto-assign task router defaults intelligently
             const flashModel = res.models.find(m => m.id.includes('flash') && !m.id.includes('lite')) || res.models[0];
             const proModel = res.models.find(m => m.id.includes('pro')) || flashModel;
             const embedModel = res.models.find(m => m.capabilities.embedContent) || { id: 'text-embedding-004' };
 
             setRouterConfig(prev => ({
               ...prev,
-              videoAnalysisModel: flashModel.id,
-              vfxInstructionModel: proModel.id,
+              videoAnalysisModel: flashModel.id || 'gemini-3.8-flash',
+              vfxInstructionModel: proModel.id || 'gemini-3.8-flash',
               embeddingModel: embedModel.id
             }));
           } else {
@@ -108,7 +98,6 @@
         discoverGoogleModels(apiKey);
       };
 
-      // Folder Pickers
       const handleImportFolders = async () => {
         if (!ipcRenderer) return;
         const res = await ipcRenderer.invoke('select-folders', { includeSubfolders });
@@ -131,7 +120,6 @@
         }
       };
 
-      // Real Google AI Effect Replication Call
       const handleAnalyzeEffects = async () => {
         if (!apiKey) {
           setCurrentTab('hub');
@@ -140,7 +128,7 @@
         }
 
         setAnalyzingVfx(true);
-        const targetModel = routerConfig.videoAnalysisModel || 'gemini-2.5-flash';
+        const targetModel = routerConfig.videoAnalysisModel || 'gemini-3.8-flash';
 
         const systemPrompt = `You are Google AI Video VFX Analyzer. Analyze the provided video timing and create a precise list of visual effects for CapCut recreation.
 Return ONLY valid JSON matching this schema:
@@ -180,7 +168,7 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                 setCurrentTab('vfx');
               }
             } catch (err) {
-              alert('Received non-JSON response from model. Swapping to fallback schema.');
+              alert('Received non-JSON response from model.');
             }
           } else {
             alert('Google AI Error: ' + res.error);
@@ -189,14 +177,12 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
         setAnalyzingVfx(false);
       };
 
-      // Launch Google Flow
       const handleLaunchFlow = async () => {
         if (ipcRenderer) {
           await ipcRenderer.invoke('launch-google-flow');
         }
       };
 
-      // CapCut Direct Injection
       const handleInjectCapCut = async () => {
         if (!ipcRenderer) return;
         if (detectedVfx.length === 0) {
@@ -233,7 +219,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
         alert(res.success ? res.message : 'Error: ' + res.error);
       };
 
-      // Canvas Compositor Loop
       useEffect(() => {
         const canvas = previewCanvasRef.current;
         if (!canvas) return;
@@ -256,7 +241,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
           ctx.scale(scale, scale);
           ctx.translate(-canvas.width / 2, -canvas.height / 2);
 
-          // Video Canvas Body
           ctx.fillStyle = '#101625';
           ctx.fillRect(30, 20, canvas.width - 60, canvas.height - 40);
 
@@ -296,7 +280,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
 
       return (
         <div className="flex flex-col h-screen text-xs select-none">
-          {/* Top Navbar */}
           <header className="h-12 bg-[#0a0d16] border-b border-gray-800 flex items-center justify-between px-4">
             <div className="flex items-center gap-3">
               <span className="font-extrabold text-indigo-400 text-sm tracking-wider">CLIPSYNC AI</span>
@@ -305,7 +288,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
               </span>
             </div>
 
-            {/* Main Tabs */}
             <div className="flex bg-[#101524] p-0.5 rounded border border-gray-800">
               <button 
                 onClick={() => setCurrentTab('hub')} 
@@ -341,12 +323,9 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
             </div>
           </header>
 
-          {/* TAB 1: GOOGLE AI HUB & TASK ROUTER */}
           {currentTab === 'hub' && (
             <div className="flex flex-1 overflow-hidden p-4 gap-4 bg-[#05070d]">
-              {/* Left Column: API Credential & Task Router */}
               <div className="w-96 flex flex-col gap-4">
-                {/* Credentials Card */}
                 <div className="bg-[#0e1322] border border-gray-800 rounded-lg p-3.5 space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="font-bold text-gray-200">Google AI Credentials</span>
@@ -372,22 +351,10 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                       {isDiscovering ? 'Scanning...' : '🔄 Refresh Models'}
                     </button>
                   </div>
-                  {tokenUsage && (
-                    <div className="text-[10px] text-gray-400 bg-gray-900/80 p-2 rounded flex justify-between">
-                      <span>Prompt: {tokenUsage.promptTokenCount}</span>
-                      <span>Output: {tokenUsage.candidatesTokenCount}</span>
-                      <span>Total: {tokenUsage.totalTokenCount}</span>
-                    </div>
-                  )}
                 </div>
 
-                {/* Smart Task Router Card */}
                 <div className="bg-[#0e1322] border border-gray-800 rounded-lg p-3.5 space-y-3 flex-1 flex flex-col">
                   <span className="font-bold text-gray-200">AI Model Task Router</span>
-                  <p className="text-[10px] text-gray-400">
-                    Assign optimal Google models based on modality and task requirement.
-                  </p>
-
                   <div className="space-y-2.5 flex-1">
                     <div>
                       <label className="text-[10px] text-gray-400 block mb-1">Video Understanding & VFX Analysis</label>
@@ -395,53 +362,15 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                         value={routerConfig.videoAnalysisModel}
                         onChange={e => setRouterConfig({...routerConfig, videoAnalysisModel: e.target.value})}
                         className="w-full bg-[#070912] border border-gray-700 rounded px-2 py-1 text-white">
-                        {modelCatalog.filter(m => m.capabilities.videoUnderstanding).map(m => (
-                          <option key={m.id} value={m.id}>{m.displayName} ({m.family})</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-[10px] text-gray-400 block mb-1">Editing Logic & CapCut Instructions (Reasoning)</label>
-                      <select 
-                        value={routerConfig.vfxInstructionModel}
-                        onChange={e => setRouterConfig({...routerConfig, vfxInstructionModel: e.target.value})}
-                        className="w-full bg-[#070912] border border-gray-700 rounded px-2 py-1 text-white">
                         {modelCatalog.map(m => (
                           <option key={m.id} value={m.id}>{m.displayName} ({m.family})</option>
                         ))}
                       </select>
                     </div>
-
-                    <div>
-                      <label className="text-[10px] text-gray-400 block mb-1">Semantic Embedding (Beat & Clip Matching)</label>
-                      <select 
-                        value={routerConfig.embeddingModel}
-                        onChange={e => setRouterConfig({...routerConfig, embeddingModel: e.target.value})}
-                        className="w-full bg-[#070912] border border-gray-700 rounded px-2 py-1 text-white">
-                        {modelCatalog.filter(m => m.capabilities.embedContent).map(m => (
-                          <option key={m.id} value={m.id}>{m.displayName}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="pt-2 border-t border-gray-800">
-                      <label className="flex items-center gap-2 text-gray-300 cursor-pointer">
-                        <input 
-                          type="checkbox"
-                          checked={routerConfig.useLocalGemma}
-                          onChange={e => setRouterConfig({...routerConfig, useLocalGemma: e.target.checked})}
-                          className="rounded bg-gray-900 border-gray-700 text-indigo-600"
-                        />
-                        <span>Enable Gemma Open Model for Local Inference</span>
-                      </label>
-                      <span className="text-[9px] text-gray-500 block ml-5">Uses localhost Ollama/GGUF runner to save cloud tokens.</span>
-                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Right Column: Dynamic Official Model Catalog */}
               <div className="flex-1 bg-[#0e1322] border border-gray-800 rounded-lg p-3.5 flex flex-col gap-3">
                 <div className="flex justify-between items-center">
                   <div>
@@ -459,46 +388,25 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                   {filteredModels.map(m => (
-                    <div key={m.id} className="p-2.5 bg-[#080b13] border border-gray-800 rounded-lg flex justify-between items-center hover:border-gray-700">
+                    <div key={m.id} className="p-2.5 bg-[#080b13] border border-gray-800 rounded-lg flex justify-between items-center">
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-white">{m.displayName}</span>
                           <span className="text-[9px] font-mono bg-indigo-950 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-900">
                             {m.family}
                           </span>
-                          <span className="text-[9px] text-emerald-400">● {m.status}</span>
                         </div>
-                        <p className="text-[10px] text-gray-400 max-w-xl truncate">{m.description || 'Google Generative Language API Model'}</p>
-                        <div className="flex gap-2 text-[9px] text-gray-500">
-                          <span>Token Limit: {m.inputTokenLimit.toLocaleString()}</span>
-                          <span>•</span>
-                          <span>Methods: {m.methods.join(', ')}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-1 items-end">
-                        <div className="flex gap-1">
-                          {m.capabilities.videoUnderstanding && <span className="bg-blue-950 text-blue-300 px-1.5 py-0.5 rounded text-[8px] border border-blue-800">Vision</span>}
-                          {m.capabilities.audioUnderstanding && <span className="bg-purple-950 text-purple-300 px-1.5 py-0.5 rounded text-[8px] border border-purple-800">Audio</span>}
-                          {m.capabilities.embedContent && <span className="bg-amber-950 text-amber-300 px-1.5 py-0.5 rounded text-[8px] border border-amber-800">Embed</span>}
-                        </div>
+                        <p className="text-[10px] text-gray-400 max-w-xl truncate">{m.description || 'Google Generative Language Model'}</p>
                       </div>
                     </div>
                   ))}
-                  {filteredModels.length === 0 && (
-                    <div className="text-center py-16 text-gray-500">
-                      API key daal kar "Save & Test Key" par click karein to fetch models.
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 2: REFERENCE VFX STUDIO & CAPCUT GENERATOR */}
           {currentTab === 'vfx' && (
             <div className="flex flex-1 overflow-hidden">
-              {/* Media & Ref Input */}
               <div className="w-80 bg-[#090d16] border-r border-gray-800 flex flex-col p-3 gap-3 overflow-y-auto">
                 <span className="font-bold text-gray-200">Reference Video & Audio</span>
                 <div className="p-2 bg-[#0e1424] rounded border border-gray-800 space-y-2">
@@ -539,7 +447,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                 </div>
               </div>
 
-              {/* Center Canvas Studio */}
               <div className="flex-1 flex flex-col bg-[#05070d]">
                 <div className="flex-1 flex flex-col items-center justify-center p-3">
                   <canvas ref={previewCanvasRef} width={640} height={340} className="split-canvas shadow-2xl"></canvas>
@@ -549,11 +456,9 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                       className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-4 py-1.5 rounded-full">
                       {isPlaying ? '⏸ Pause' : '▶ Play VFX Simulation'}
                     </button>
-                    <span className="font-mono text-gray-400">00:0{playbackTime.toFixed(2)}s / 00:10.00s</span>
                   </div>
                 </div>
 
-                {/* Timeline Strip */}
                 <div className="h-40 bg-[#080b13] border-t border-gray-800 p-2 flex flex-col justify-between">
                   <div className="flex justify-between text-[10px] text-gray-400">
                     <span>GOOGLE AI REPLICATED EFFECTS TIMELINE</span>
@@ -576,7 +481,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                 </div>
               </div>
 
-              {/* Right Panel: Parametric Adjuster */}
               <div className="w-80 bg-[#090d16] border-l border-gray-800 p-3 space-y-3 overflow-y-auto">
                 <span className="font-bold text-gray-200">Parametric Effect Controls</span>
                 {detectedVfx[activeVfxIndex] ? (
@@ -602,27 +506,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                         className="w-full accent-indigo-500"
                       />
                     </div>
-
-                    <div>
-                      <div className="flex justify-between text-[10px] mb-1 text-gray-400">
-                        <span>Shake Impact</span>
-                        <span className="text-white">{detectedVfx[activeVfxIndex].parameters.shakeIntensity}</span>
-                      </div>
-                      <input 
-                        type="range" min="0.0" max="1.5" step="0.1"
-                        value={detectedVfx[activeVfxIndex].parameters.shakeIntensity}
-                        onChange={e => {
-                          const c = [...detectedVfx];
-                          c[activeVfxIndex].parameters.shakeIntensity = parseFloat(e.target.value);
-                          setDetectedVfx(c);
-                        }}
-                        className="w-full accent-indigo-500"
-                      />
-                    </div>
-
-                    <p className="text-[10px] text-gray-400 bg-[#05070d] p-2 rounded border border-gray-800">
-                      {detectedVfx[activeVfxIndex].replicationLogic}
-                    </p>
                   </div>
                 ) : (
                   <div className="text-gray-500 text-center py-10">Select or analyze a clip first.</div>
@@ -631,64 +514,16 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
             </div>
           )}
 
-          {/* TAB 3: SPLIT COMPARISON */}
-          {currentTab === 'compare' && (
-            <div className="flex-1 flex flex-col p-4 bg-[#05070d] gap-4 overflow-y-auto">
-              <span className="font-bold text-gray-200 text-sm">Reference vs Replicated Frame Comparison</span>
-              <div className="grid grid-cols-2 gap-4 h-80">
-                <div className="bg-[#090e1a] rounded border border-gray-800 flex flex-col items-center justify-center">
-                  <span className="text-gray-500 font-mono">Reference Video Stream</span>
-                </div>
-                <div className="bg-[#090e1a] rounded border border-gray-800 flex flex-col items-center justify-center">
-                  <span className="text-indigo-400 font-mono font-bold">CapCut Replicated Stream</span>
-                </div>
-              </div>
-
-              <div className="bg-[#0e1322] border border-gray-800 rounded p-3">
-                <span className="font-bold text-gray-200 block mb-2">Effect Accuracy Audit</span>
-                <table className="w-full text-left text-[11px]">
-                  <thead>
-                    <tr className="text-gray-400 border-b border-gray-800">
-                      <th className="py-1">Time</th>
-                      <th>Effect</th>
-                      <th>Parameters</th>
-                      <th>Replication Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-800/60 text-gray-300">
-                    {detectedVfx.map((v, i) => (
-                      <tr key={i} className="py-2">
-                        <td className="py-1 font-mono text-emerald-400">{v.timestampStart}s - {v.timestampEnd}s</td>
-                        <td className="font-semibold text-white">{v.effectType}</td>
-                        <td className="text-gray-400 font-mono">Scale {v.parameters.scale}x | Shake {v.parameters.shakeIntensity}</td>
-                        <td><span className="bg-emerald-950 text-emerald-300 px-1.5 py-0.5 rounded text-[9px]">CapCut Compatible</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: GOOGLE FLOW BRIDGE */}
           {currentTab === 'flow' && (
             <div className="flex-1 flex flex-col items-center justify-center p-8 bg-[#05070d]">
               <div className="max-w-md bg-[#0e1322] border border-gray-800 rounded-xl p-6 text-center space-y-4 shadow-2xl">
                 <span className="text-2xl block">🎬</span>
                 <h3 className="font-bold text-base text-gray-100">Google Flow Filmmaking Studio</h3>
-                <p className="text-xs text-gray-400 leading-relaxed">
-                  Google Flow is an interactive web-based AI filmmaking suite. Since an open public REST API is not yet released, ClipSync AI provides direct studio integration to import your exported Flow renders into the CapCut timeline.
-                </p>
                 <div className="flex flex-col gap-2 pt-2">
                   <button 
                     onClick={handleLaunchFlow}
-                    className="w-full bg-indigo-600 hover:bg-indigo-500 font-bold py-2 rounded text-white flex items-center justify-center gap-2">
+                    className="w-full bg-indigo-600 hover:bg-indigo-500 font-bold py-2 rounded text-white">
                     🚀 Launch Google Flow in Browser
-                  </button>
-                  <button 
-                    onClick={handleImportFolders}
-                    className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 rounded border border-gray-700">
-                    📂 Import Downloaded Flow Videos to ClipSync
                   </button>
                 </div>
               </div>
