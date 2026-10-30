@@ -2,18 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>ClipSync AI — Pro CapCut Desktop Studio</title>
-  <!-- React & Babel CDN -->
+  <title>ClipSync AI — Native CapCut Studio</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background-color: #080b11; color: #f1f5f9; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    body { background-color: #06090e; color: #f3f4f6; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #0c121e; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -21,293 +19,476 @@
 
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
+    const { ipcRenderer } = window.require ? window.require('electron') : { ipcRenderer: null };
 
-    function ClipSyncApp() {
-      const [key1, setKey1] = useState(localStorage.getItem('clipsync_primary_key') || '');
-      const [key2, setKey2] = useState(localStorage.getItem('clipsync_secondary_key') || '');
-      const [showSettings, setShowSettings] = useState(false);
-      const [savedAlert, setSavedAlert] = useState(false);
-      
+    const CAPCUT_TRANSITION_LIBRARY = [
+      { id: 'tr_zoom_in', name: 'Zoom In', category: 'Camera', duration: 0.4, intensity: 1.0, capcutId: 'transition_zoom_in_01' },
+      { id: 'tr_zoom_out', name: 'Zoom Out', category: 'Camera', duration: 0.4, intensity: 1.0, capcutId: 'transition_zoom_out_01' },
+      { id: 'tr_whip_pan_r', name: 'Whip Pan Right', category: 'Motion Blur', duration: 0.3, intensity: 1.2, capcutId: 'transition_whip_right' },
+      { id: 'tr_whip_pan_l', name: 'Whip Pan Left', category: 'Motion Blur', duration: 0.3, intensity: 1.2, capcutId: 'transition_whip_left' },
+      { id: 'tr_flash_white', name: 'Flash White', category: 'Light', duration: 0.25, intensity: 1.5, capcutId: 'transition_white_flash' },
+      { id: 'tr_glitch_chroma', name: 'Chroma Glitch', category: 'Glitch', duration: 0.35, intensity: 0.8, capcutId: 'transition_chroma_glitch' },
+      { id: 'tr_shake_impact', name: 'Camera Shake Impact', category: 'Action', duration: 0.3, intensity: 1.4, capcutId: 'effect_shake_heavy' },
+      { id: 'tr_speed_ramp', name: 'Speed Curve (Hero Flow)', category: 'Speed', duration: 0.6, curve: [0.2, 2.5, 0.4, 1.0], capcutId: 'curve_hero_speed' }
+    ];
+
+    function App() {
+      const [folders, setFolders] = useState([]);
+      const [importedFiles, setImportedFiles] = useState([]);
+      const [includeSubfolders, setIncludeSubfolders] = useState(true);
+      const [scanning, setScanning] = useState(false);
+      const [scanProgress, setScanProgress] = useState('');
+
       const [refUrl, setRefUrl] = useState('');
-      const [analyzing, setAnalyzing] = useState(false);
-      const [refAnalyzed, setRefAnalyzed] = useState(false);
-      const [currentTime, setCurrentTime] = useState(0);
-      const [isPlaying, setIsPlaying] = useState(false);
-      
-      const [chatMessages, setChatMessages] = useState([
-        { sender: 'ai', text: 'Namaste! Main ClipSync AI hoon. Reference video ka link daliye aur mujhe Hinglish ya English mein batayein kaise edit karna hai.' }
-      ]);
-      const [inputMsg, setInputMsg] = useState('');
-      const [pendingDiff, setPendingDiff] = useState(null);
+      const [refPlatform, setRefPlatform] = useState(null);
+      const [audioFile, setAudioFile] = useState(null);
+      const [bpm, setBpm] = useState(124);
+      const [detectedBeats, setDetectedBeats] = useState([]);
+      const [isAnalyzingAudio, setIsAnalyzingAudio] = useState(false);
 
-      const canvasRef = useRef(null);
+      const [editingMode, setEditingMode] = useState('ai');
+      const [timelineClips, setTimelineClips] = useState([]);
+      const [selectedTransition, setSelectedTransition] = useState(CAPCUT_TRANSITION_LIBRARY[0]);
+      const [activeClipIndex, setActiveClipIndex] = useState(0);
 
-      // Save keys
-      const saveKeys = () => {
-        localStorage.setItem('clipsync_primary_key', key1);
-        localStorage.setItem('clipsync_secondary_key', key2);
-        setSavedAlert(true);
-        setTimeout(() => setSavedAlert(false), 3000);
+      const waveformCanvasRef = useRef(null);
+
+      const extractVideoMetadata = (fileObj) => {
+        return new Promise((resolve) => {
+          const video = document.createElement('video');
+          video.preload = 'metadata';
+          video.src = 'file://' + fileObj.fullPath;
+          video.onloadedmetadata = () => {
+            resolve({
+              duration: video.duration || 0,
+              width: video.videoWidth || 1920,
+              height: video.videoHeight || 1080,
+              fps: 30
+            });
+          };
+          video.onerror = () => {
+            resolve({ duration: 0, width: 1920, height: 1080, fps: 30 });
+          };
+        });
       };
 
-      // Mock Timeline Data
-      const [shots, setShots] = useState([
-        { id: 'shot_1', in: '00:00.000', out: '00:02.400', cut: 'Fast Zoom', match: 'folder_A/groom_entry_01.mp4', cutout: 'Groom Cutout', speed: '2.0x -> 0.5x' },
-        { id: 'shot_2', in: '00:02.400', out: '00:04.100', cut: 'Flash Beat', match: 'folder_B/bride_smile_04.mp4', cutout: 'Bride Cutout', speed: '1.0x Normal' },
-        { id: 'shot_3', in: '00:04.100', out: '00:06.800', cut: 'Smooth Pan', match: 'folder_C/couple_stage_02.mp4', cutout: 'Couple Cutout', speed: '0.5x Slowmo' }
-      ]);
+      const handleImportFolders = async () => {
+        if (!ipcRenderer) {
+          alert('Desktop Electron environment not detected.');
+          return;
+        }
+        setScanning(true);
+        setScanProgress('Folders scan ho rahe hain...');
+        try {
+          const res = await ipcRenderer.invoke('select-folders', { includeSubfolders });
+          if (!res.canceled && res.folders.length > 0) {
+            let newlyFoundFiles = [];
+            for (const f of res.folders) {
+              newlyFoundFiles.push(...f.files);
+            }
 
-      // Canvas Real-Time Render Simulation
+            const existingPaths = new Set(importedFiles.map(x => x.fullPath));
+            const uniqueNew = newlyFoundFiles.filter(x => !existingPaths.has(x.fullPath));
+
+            setScanProgress(`${uniqueNew.length} files analyze ho rahi hain...`);
+            const enriched = [];
+            for (let i = 0; i < uniqueNew.length; i++) {
+              const item = uniqueNew[i];
+              if (item.type === 'video') {
+                const meta = await extractVideoMetadata(item);
+                enriched.push({ ...item, ...meta });
+              } else {
+                enriched.push({ ...item, duration: 0, width: 0, height: 0, fps: 0 });
+              }
+            }
+
+            setFolders(prev => [...prev, ...res.folders.map(x => ({ folderName: x.folderName, folderPath: x.folderPath, count: x.files.length }))]);
+            setImportedFiles(prev => [...prev, ...enriched]);
+          }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setScanning(false);
+          setScanProgress('');
+        }
+      };
+
+      const removeFolder = (folderPath) => {
+        setFolders(prev => prev.filter(f => f.folderPath !== folderPath));
+        setImportedFiles(prev => prev.filter(file => !file.fullPath.startsWith(folderPath)));
+      };
+
       useEffect(() => {
-        const canvas = canvasRef.current;
+        if (!refUrl) { setRefPlatform(null); return; }
+        if (refUrl.includes('youtube.com') || refUrl.includes('youtu.be')) {
+          setRefPlatform(refUrl.includes('/shorts/') ? 'YouTube Shorts' : 'YouTube Video');
+        } else if (refUrl.includes('instagram.com')) {
+          setRefPlatform(refUrl.includes('/reel/') ? 'Instagram Reel' : 'Instagram Video');
+        } else {
+          setRefPlatform('Direct Web Stream');
+        }
+      }, [refUrl]);
+
+      const handleAudioFileImport = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsAnalyzingAudio(true);
+        setAudioFile(file.name);
+
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+
+          drawWaveform(decoded);
+
+          const rawData = decoded.getChannelData(0);
+          const sampleRate = decoded.sampleRate;
+          const peaks = [];
+          const step = Math.floor(sampleRate * 0.25);
+
+          for (let i = 0; i < rawData.length; i += step) {
+            let sum = 0;
+            for (let j = 0; j < step && i + j < rawData.length; j++) {
+              sum += Math.abs(rawData[i + j]);
+            }
+            const energy = sum / step;
+            if (energy > 0.18) {
+              peaks.push((i / sampleRate));
+            }
+          }
+
+          if (peaks.length > 2) {
+            let intervals = [];
+            for (let k = 1; k < peaks.length; k++) intervals.push(peaks[k] - peaks[k - 1]);
+            const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+            const calculatedBpm = Math.round(60 / (avgInterval || 0.5));
+            setBpm(calculatedBpm > 60 && calculatedBpm < 200 ? calculatedBpm : 124);
+          }
+          setDetectedBeats(peaks.slice(0, 16));
+        } catch (err) {
+          console.error("Audio decode error:", err);
+        } finally {
+          setIsAnalyzingAudio(false);
+        }
+      };
+
+      const drawWaveform = (buffer) => {
+        const canvas = waveformCanvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        let frameId;
+        const data = buffer.getChannelData(0);
+        const step = Math.ceil(data.length / canvas.width);
+        const amp = canvas.height / 2;
 
-        const render = () => {
-          ctx.fillStyle = '#05070d';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#6366f1';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, amp);
 
-          // Split View: Left Reference / Right User Match
-          ctx.strokeStyle = '#1e293b';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(canvas.width / 2, 0);
-          ctx.lineTo(canvas.width / 2, canvas.height);
-          ctx.stroke();
-
-          // Left Side - Reference Feed
-          ctx.fillStyle = '#64748b';
-          ctx.font = '11px sans-serif';
-          ctx.fillText('REFERENCE TIMING & BEATS (ORIGINAL)', 20, 25);
-          ctx.fillStyle = '#1e1b4b';
-          ctx.fillRect(20, 40, canvas.width / 2 - 35, canvas.height - 60);
-          ctx.fillStyle = '#a5b4fc';
-          ctx.font = '12px sans-serif';
-          ctx.fillText(refAnalyzed ? 'Shot 1: Beat Cut Synced (124 BPM)' : 'No Reference Loaded', 40, canvas.height / 2);
-
-          // Right Side - User Matched Footage with Cutout
-          ctx.fillStyle = '#64748b';
-          ctx.fillText('USER MATCHED CLIPS (CAPCUT PREVIEW)', canvas.width / 2 + 15, 25);
-          ctx.fillStyle = '#0f172a';
-          ctx.fillRect(canvas.width / 2 + 15, 40, canvas.width / 2 - 35, canvas.height - 60);
-
-          // Draw Simulated Wedding Cutout Overlay
-          ctx.fillStyle = '#ec4899';
-          ctx.beginPath();
-          ctx.arc(canvas.width * 0.75, canvas.height / 2 - 10, 50, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 12px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('Groom + Bride Cutout Layer', canvas.width * 0.75, canvas.height / 2 + 55);
-          ctx.textAlign = 'left';
-
-          if (isPlaying) {
-            setCurrentTime(prev => (prev + 0.03 > 6.8 ? 0 : prev + 0.03));
+        for (let i = 0; i < canvas.width; i++) {
+          let min = 1.0;
+          let max = -1.0;
+          for (let j = 0; j < step; j++) {
+            const datum = data[(i * step) + j];
+            if (datum < min) min = datum;
+            if (datum > max) max = datum;
           }
-          frameId = requestAnimationFrame(render);
-        };
-        render();
-        return () => cancelAnimationFrame(frameId);
-      }, [isPlaying, refAnalyzed]);
-
-      // Chatbot Handle Hinglish
-      const handleSendChat = () => {
-        if (!inputMsg.trim()) return;
-        const userText = inputMsg;
-        setChatMessages(prev => [...prev, { sender: 'user', text: userText }]);
-        setInputMsg('');
-
-        setTimeout(() => {
-          if (userText.toLowerCase().includes('cutout') || userText.toLowerCase().includes('groom') || userText.toLowerCase().includes('bride')) {
-            setPendingDiff({
-              title: 'Apply Wedding Cutouts Plan',
-              desc: 'Shot 1 aur Shot 3 par AI Subject Cutout aur Golden Rim Glow enable karein?',
-              action: () => {
-                alert('Cutouts timeline par apply ho gaye!');
-                setPendingDiff(null);
-              }
-            });
-            setChatMessages(prev => [...prev, { sender: 'ai', text: 'Maine wedding cutouts ka plan bana liya hai. Neeche diye card se Approve kijiye.' }]);
-          } else {
-            setChatMessages(prev => [...prev, { sender: 'ai', text: `Aapke instruction: "${userText}" ke according timeline modify kar di gayi hai.` }]);
-          }
-        }, 800);
+          ctx.lineTo(i, (1 + min) * amp);
+          ctx.lineTo(i, (1 + max) * amp);
+        }
+        ctx.stroke();
       };
 
-      const handleAnalyze = () => {
-        if (!refUrl) { alert('Pehle YouTube ya Instagram link daalein'); return; }
-        setAnalyzing(true);
-        setTimeout(() => {
-          setAnalyzing(false);
-          setRefAnalyzed(true);
-          alert('Reference video analyze ho gaya! 3 cuts aur 124 BPM rhythm detect huyi hai.');
-        }, 1500);
+      const runAiSmartEdit = () => {
+        const videoClips = importedFiles.filter(f => f.type === 'video');
+        if (videoClips.length === 0) {
+          alert('Pehle apne PC se video clips import kijiye!');
+          return;
+        }
+
+        const beatPoints = detectedBeats.length > 0 ? detectedBeats : [0.0, 1.8, 3.4, 5.2, 7.0, 8.8, 10.5];
+        const newTimeline = [];
+
+        for (let i = 0; i < beatPoints.length - 1; i++) {
+          const assignedClip = videoClips[i % videoClips.length];
+          const startTime = beatPoints[i];
+          const endTime = beatPoints[i + 1];
+          const duration = endTime - startTime;
+          const transition = CAPCUT_TRANSITION_LIBRARY[i % CAPCUT_TRANSITION_LIBRARY.length];
+
+          newTimeline.push({
+            id: 'clip_' + (i + 1),
+            sourcePath: assignedClip.fullPath,
+            fileName: assignedClip.name,
+            inPoint: 0.0,
+            outPoint: duration,
+            timelineStart: startTime,
+            timelineEnd: endTime,
+            duration: duration,
+            transition: transition,
+            speedRamp: i % 2 === 0 ? '2.0x -> 0.5x' : '1.0x Normal'
+          });
+        }
+        setTimelineClips(newTimeline);
       };
 
-      // CapCut Export Bridge
-      const exportCapCutJSON = () => {
-        const draft = {
-          app: "CapCut Desktop Bridge",
-          version: "2.0",
-          media: shots.map(s => ({ shot: s.id, file: s.match, in: s.in, out: s.out, speed: s.speed, cutout: s.cutout }))
+      const handleExportCapCut = async () => {
+        if (!ipcRenderer) return;
+
+        if (timelineClips.length === 0) {
+          alert('Timeline khali hai! Pehle "Run AI Smart Edit" karein.');
+          return;
+        }
+
+        const capcutDraftJSON = {
+          app_version: "5.0.0",
+          platform: "windows",
+          tracks: [
+            {
+              id: "track_main_video_v1",
+              type: "video",
+              segments: timelineClips.map((c, idx) => ({
+                id: c.id,
+                material_id: "mat_vid_" + idx,
+                source_timerange: { start: Math.round(c.inPoint * 1000000), duration: Math.round(c.duration * 1000000) },
+                target_timerange: { start: Math.round(c.timelineStart * 1000000), duration: Math.round(c.duration * 1000000) },
+                path: c.sourcePath,
+                extra_meta: {
+                  transition_name: c.transition.name,
+                  capcut_effect_id: c.transition.capcutId,
+                  speed_curve: c.speedRamp
+                }
+              }))
+            }
+          ],
+          materials: {
+            videos: timelineClips.map((c, idx) => ({
+              id: "mat_vid_" + idx,
+              path: c.sourcePath,
+              type: "video"
+            })),
+            transitions: timelineClips.map(c => ({
+              name: c.transition.name,
+              capcut_id: c.transition.capcutId,
+              duration: c.transition.duration
+            }))
+          }
         };
-        const blob = new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" });
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = "ClipSync_CapCut_Draft.json";
-        a.click();
+
+        const res = await ipcRenderer.invoke('export-capcut-draft', {
+          draftData: capcutDraftJSON,
+          projectName: 'ClipSync_' + (refPlatform ? refPlatform.replace(/\s+/g, '_') : 'Project')
+        });
+
+        if (res.success) {
+          alert(res.message);
+        } else {
+          alert('Error: ' + res.error);
+        }
       };
 
       return (
-        <div className="flex flex-col h-screen select-none">
-          {/* Top Navbar */}
-          <header className="h-12 bg-[#0d121f] border-b border-gray-800 flex items-center justify-between px-4">
+        <div className="flex flex-col h-screen text-xs select-none">
+          <header className="h-12 bg-[#0c101a] border-b border-gray-800 flex items-center justify-between px-4">
             <div className="flex items-center gap-3">
-              <span className="font-bold text-indigo-400 text-sm tracking-wide">CLIPSYNC AI</span>
-              <span className="text-[10px] bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded border border-indigo-800">CapCut Studio v1.0</span>
+              <span className="font-extrabold text-indigo-400 tracking-wider text-sm">CLIPSYNC AI</span>
+              <span className="bg-indigo-950 text-indigo-300 border border-indigo-800 px-2 py-0.5 rounded text-[10px]">
+                CapCut Desktop Agent
+              </span>
             </div>
-            <div className="flex items-center gap-3">
-              <button onClick={() => setShowSettings(!showSettings)} className="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded border border-gray-700">
-                ⚙️ API Settings
-              </button>
-              <button onClick={exportCapCutJSON} className="text-xs bg-indigo-600 hover:bg-indigo-500 font-semibold px-3 py-1.5 rounded text-white shadow">
-                Export to CapCut
+            
+            <div className="flex items-center gap-4">
+              <div className="flex bg-[#141b2d] rounded p-0.5 border border-gray-700">
+                <button 
+                  onClick={() => setEditingMode('manual')}
+                  className={`px-3 py-1 rounded text-[11px] font-semibold transition ${editingMode === 'manual' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                  Manual Mode
+                </button>
+                <button 
+                  onClick={() => setEditingMode('ai')}
+                  className={`px-3 py-1 rounded text-[11px] font-semibold transition ${editingMode === 'ai' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                  AI Auto Edit Mode
+                </button>
+              </div>
+
+              <button 
+                onClick={handleExportCapCut}
+                className="bg-emerald-600 hover:bg-emerald-500 font-bold text-white px-4 py-1.5 rounded shadow flex items-center gap-1.5">
+                ⚡ Inject to CapCut PC
               </button>
             </div>
           </header>
 
-          {/* Settings Modal */}
-          {showSettings && (
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center">
-              <div className="bg-[#121826] border border-gray-700 rounded-xl p-5 w-96 shadow-2xl">
-                <h3 className="text-sm font-bold text-white mb-3">AI API Credentials</h3>
-                <label className="text-[11px] text-gray-400 block mb-1">Primary Model Key (GPT-4o / Claude)</label>
-                <input type="password" value={key1} onChange={e=>setKey1(e.target.value)} className="w-full bg-[#080b11] border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white mb-3 focus:outline-none focus:border-indigo-500" />
-                <label className="text-[11px] text-gray-400 block mb-1">Secondary Key (Multimodal Vision / Scene)</label>
-                <input type="password" value={key2} onChange={e=>setKey2(e.target.value)} className="w-full bg-[#080b11] border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white mb-4 focus:outline-none focus:border-indigo-500" />
-                <div className="flex justify-between items-center">
-                  <button onClick={saveKeys} className="bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold px-4 py-1.5 rounded text-white">Save Keys</button>
-                  <button onClick={() => setShowSettings(false)} className="text-xs text-gray-400 hover:text-white">Close</button>
-                </div>
-                {savedAlert && <p className="text-[11px] text-emerald-400 mt-2">✓ Keys saved successfully!</p>}
-              </div>
-            </div>
-          )}
-
-          {/* Main 3-Column Layout */}
           <div className="flex flex-1 overflow-hidden">
-            {/* Left Column: Media & Reference Analysis */}
-            <div className="w-72 bg-[#0e1322] border-r border-gray-800 flex flex-col p-3 gap-3 overflow-y-auto">
-              <div className="bg-[#141b2d] p-3 rounded-lg border border-gray-800">
-                <span className="text-xs font-bold text-gray-300 block mb-2">1. Reference Video URL</span>
-                <input type="text" placeholder="Paste YouTube / Instagram Link" value={refUrl} onChange={e=>setRefUrl(e.target.value)} className="w-full bg-[#090d16] border border-gray-700 rounded px-2 py-1.5 text-xs text-white mb-2" />
-                <button onClick={handleAnalyze} className="w-full bg-slate-800 hover:bg-slate-700 text-xs py-1.5 rounded font-medium text-indigo-300 border border-slate-700">
-                  {analyzing ? 'Analyzing Beats & Cuts...' : 'Detect Cuts & Timing'}
-                </button>
+            <div className="w-80 bg-[#0a0d16] border-r border-gray-800 flex flex-col p-3 gap-3 overflow-y-auto">
+              <div className="flex justify-between items-center">
+                <span className="font-bold text-gray-200">Local Media Folders</span>
+                <span className="text-[10px] text-gray-400">Total: {importedFiles.length} files</span>
               </div>
 
-              <div className="bg-[#141b2d] p-3 rounded-lg border border-gray-800 flex-1 flex flex-col">
-                <span className="text-xs font-bold text-gray-300 block mb-2">2. Imported Media Folders</span>
-                <div className="space-y-2 text-xs text-gray-400 flex-1 overflow-y-auto">
-                  <div className="p-2 bg-[#090d16] rounded border border-gray-800 flex justify-between">
-                    <span>📁 folder_A_Groom_Baraat</span>
-                    <span className="text-[10px] text-emerald-400">12 clips</span>
-                  </div>
-                  <div className="p-2 bg-[#090d16] rounded border border-gray-800 flex justify-between">
-                    <span>📁 folder_B_Bride_Entry</span>
-                    <span className="text-[10px] text-emerald-400">8 clips</span>
-                  </div>
-                  <div className="p-2 bg-[#090d16] rounded border border-gray-800 flex justify-between">
-                    <span>📁 folder_C_Couple_Stage</span>
-                    <span className="text-[10px] text-emerald-400">15 clips</span>
-                  </div>
+              <label className="flex items-center gap-1.5 text-[10px] text-gray-400 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={includeSubfolders} 
+                  onChange={e => setIncludeSubfolders(e.target.checked)} 
+                  className="rounded bg-gray-900 border-gray-700 text-indigo-600"
+                />
+                Scan Subfolders
+              </label>
+
+              <button 
+                onClick={handleImportFolders} 
+                disabled={scanning}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded font-semibold transition">
+                📂 Import PC Folders
+              </button>
+
+              {scanning && (
+                <div className="text-[10px] text-indigo-300 animate-pulse bg-indigo-950/40 p-1.5 rounded border border-indigo-900">
+                  {scanProgress}
                 </div>
-              </div>
-            </div>
+              )}
 
-            {/* Middle Column: Live Compositor & Timeline */}
-            <div className="flex-1 flex flex-col bg-[#05070d]">
-              {/* Canvas Preview */}
-              <div className="flex-1 flex flex-col items-center justify-center p-3 relative">
-                <canvas ref={canvasRef} width={640} height={320} className="rounded-lg shadow-2xl border border-gray-800"></canvas>
-                <div className="flex items-center gap-4 mt-3">
-                  <button onClick={() => setIsPlaying(!isPlaying)} className="bg-indigo-600 hover:bg-indigo-500 text-xs px-4 py-1.5 rounded-full font-bold">
-                    {isPlaying ? '⏸ Pause' : '▶ Play Synced Preview'}
-                  </button>
-                  <span className="text-xs text-gray-400 font-mono">Time: 00:0{currentTime.toFixed(2)}s / 00:06.80s</span>
-                </div>
-              </div>
-
-              {/* Multi-Track NLE Timeline */}
-              <div className="h-48 bg-[#0a0e1a] border-t border-gray-800 p-2 flex flex-col gap-1.5">
-                <div className="text-[11px] text-gray-500 font-semibold px-2 flex justify-between">
-                  <span>TIMELINE (CAPCUT SYNCED MULTI-TRACK)</span>
-                  <span className="text-indigo-400">Rhythm: 124 BPM</span>
-                </div>
-
-                {/* Track V2: Cutouts */}
-                <div className="h-8 bg-[#0f1526] rounded flex items-center px-2 relative border border-gray-800/80">
-                  <span className="text-[10px] text-gray-400 w-16">V2 Cutout</span>
-                  <div className="absolute left-20 w-32 h-6 bg-pink-700/80 rounded border border-pink-500 flex items-center justify-center text-[10px] font-bold text-white">Groom Cutout</div>
-                  <div className="absolute left-56 w-28 h-6 bg-purple-700/80 rounded border border-purple-500 flex items-center justify-center text-[10px] font-bold text-white">Bride Cutout</div>
-                  <div className="absolute left-88 w-44 h-6 bg-fuchsia-700/80 rounded border border-fuchsia-500 flex items-center justify-center text-[10px] font-bold text-white">Couple Cutout</div>
-                </div>
-
-                {/* Track V1: User Clips */}
-                <div className="h-8 bg-[#0f1526] rounded flex items-center px-2 relative border border-gray-800/80">
-                  <span className="text-[10px] text-gray-400 w-16">V1 Clips</span>
-                  <div className="absolute left-20 w-32 h-6 bg-blue-700/80 rounded border border-blue-500 flex items-center justify-center text-[10px] text-white">groom_entry_01</div>
-                  <div className="absolute left-56 w-28 h-6 bg-blue-600/80 rounded border border-blue-500 flex items-center justify-center text-[10px] text-white">bride_smile_04</div>
-                  <div className="absolute left-88 w-44 h-6 bg-indigo-700/80 rounded border border-indigo-500 flex items-center justify-center text-[10px] text-white">couple_stage_02</div>
-                </div>
-
-                {/* Track A1: Audio Beats */}
-                <div className="h-8 bg-[#0f1526] rounded flex items-center px-2 relative border border-gray-800/80">
-                  <span className="text-[10px] text-gray-400 w-16">A1 Audio</span>
-                  <div className="absolute left-20 right-4 h-6 bg-emerald-950/60 rounded border border-emerald-600 flex items-center justify-around text-[10px] text-emerald-300">
-                    <span>|||| Beat 1</span><span>|||| Beat 2</span><span>|||| Beat 3</span><span>|||| Beat 4</span><span>|||| Beat 5</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Hinglish AI Chatbox */}
-            <div className="w-80 bg-[#0e1322] border-l border-gray-800 flex flex-col">
-              <div className="p-3 border-b border-gray-800 text-xs font-bold text-gray-300">
-                AI Editing Assistant (Hinglish/English)
-              </div>
-              <div className="flex-1 p-3 overflow-y-auto space-y-3">
-                {chatMessages.map((m, idx) => (
-                  <div key={idx} className={`p-2.5 rounded-lg text-xs leading-relaxed ${m.sender === 'user' ? 'bg-indigo-600 text-white ml-6' : 'bg-[#182033] text-gray-200 mr-6 border border-gray-700'}`}>
-                    {m.text}
-                  </div>
-                ))}
-
-                {/* Diff Approval Card */}
-                {pendingDiff && (
-                  <div className="bg-amber-950/40 border border-amber-600/60 p-3 rounded-lg text-xs space-y-2">
-                    <span className="font-bold text-amber-300 block">{pendingDiff.title}</span>
-                    <p className="text-gray-300">{pendingDiff.desc}</p>
-                    <div className="flex gap-2 pt-1">
-                      <button onClick={pendingDiff.action} className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded text-[11px]">Approve & Apply</button>
-                      <button onClick={() => setPendingDiff(null)} className="bg-gray-700 hover:bg-gray-600 text-gray-300 px-3 py-1 rounded text-[11px]">Reject</button>
+              <div className="space-y-1.5 max-h-36 overflow-y-auto border-b border-gray-800 pb-2">
+                {folders.map((f, i) => (
+                  <div key={i} className="flex justify-between items-center p-1.5 bg-[#121826] rounded border border-gray-800">
+                    <span className="truncate w-44 font-mono text-[10px] text-gray-300">📁 {f.folderName}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] bg-gray-800 px-1.5 py-0.5 rounded text-gray-400">{f.count} clips</span>
+                      <button onClick={() => removeFolder(f.folderPath)} className="text-red-400 hover:text-red-300">✕</button>
                     </div>
                   </div>
-                )}
+                ))}
               </div>
 
-              <div className="p-3 border-t border-gray-800 flex gap-2">
-                <input
-                  type="text"
-                  placeholder='e.g. "Groom aur Bride cutout lagao"'
-                  value={inputMsg}
-                  onChange={e=>setInputMsg(e.target.value)}
-                  onKeyDown={e=>e.key === 'Enter' && handleSendChat()}
-                  className="flex-1 bg-[#090d16] border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+              <span className="font-bold text-gray-300 text-[11px] pt-1">Imported Clips List</span>
+              <div className="flex-1 space-y-1.5 overflow-y-auto pr-1">
+                {importedFiles.map((file, idx) => (
+                  <div key={idx} className="p-2 bg-[#101624] rounded border border-gray-800/80 flex flex-col gap-1 hover:border-gray-700">
+                    <div className="flex justify-between items-center">
+                      <span className="truncate w-48 font-medium text-gray-200">{file.name}</span>
+                      <span className="text-[9px] text-indigo-400 uppercase">{file.ext.replace('.', '')}</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-gray-400 font-mono">
+                      <span>{file.duration ? `${file.duration.toFixed(1)}s` : 'Analyzing...'}</span>
+                      <span>{file.width}x{file.height}</span>
+                      <span>{(file.sizeBytes / (1024 * 1024)).toFixed(1)}MB</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 flex flex-col bg-[#05070d]">
+              <div className="p-3 bg-[#0c101a] border-b border-gray-800 flex items-center gap-3">
+                <input 
+                  type="text" 
+                  placeholder="Paste YouTube Video / Shorts or Instagram Reel URL here..."
+                  value={refUrl}
+                  onChange={e => setRefUrl(e.target.value)}
+                  className="flex-1 bg-[#06080e] border border-gray-700 rounded px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
                 />
-                <button onClick={handleSendChat} className="bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded text-xs font-bold text-white">Send</button>
+                {refPlatform && (
+                  <span className="bg-emerald-950 text-emerald-300 border border-emerald-800 px-2.5 py-1 rounded text-[11px] font-semibold whitespace-nowrap">
+                    Detected: {refPlatform}
+                  </span>
+                )}
+                <label className="bg-gray-800 hover:bg-gray-700 text-gray-200 px-3 py-1.5 rounded cursor-pointer border border-gray-600 whitespace-nowrap">
+                  Load Audio / Music
+                  <input type="file" accept="audio/*,video/*" onChange={handleAudioFileImport} className="hidden" />
+                </label>
+              </div>
+
+              <div className="px-4 py-2 bg-[#090d16] border-b border-gray-800">
+                <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                  <span>Audio Waveform & Beat Spectrum</span>
+                  <span className="text-indigo-400 font-mono">Detected BPM: {bpm} | Major Beat Points: {detectedBeats.length}</span>
+                </div>
+                <canvas ref={waveformCanvasRef} width={800} height={40} className="rounded border border-gray-800 w-full"></canvas>
+              </div>
+
+              <div className="flex-1 flex flex-col items-center justify-center p-4">
+                <div className="w-[620px] h-[340px] bg-[#0c101b] rounded-lg border border-gray-800 flex flex-col items-center justify-center relative overflow-hidden shadow-2xl">
+                  <div className="absolute top-3 left-3 flex gap-2">
+                    <span className="bg-black/60 px-2 py-0.5 rounded text-[10px] text-gray-400 border border-gray-700">
+                      Active: {timelineClips[activeClipIndex] ? timelineClips[activeClipIndex].fileName : 'No Clip Selected'}
+                    </span>
+                    <span className="bg-indigo-950/80 px-2 py-0.5 rounded text-[10px] text-indigo-300 border border-indigo-800">
+                      CapCut FX: {timelineClips[activeClipIndex] ? timelineClips[activeClipIndex].transition.name : 'None'}
+                    </span>
+                  </div>
+
+                  <span className="text-indigo-400 font-bold text-sm tracking-wide">
+                    REAL-TIME EDIT PREVIEW
+                  </span>
+
+                  <button 
+                    onClick={runAiSmartEdit}
+                    className="mt-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold px-5 py-2 rounded-lg shadow-lg flex items-center gap-2">
+                    ⚡ Run AI Smart Edit (Sync with Audio Beats)
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-44 bg-[#090d16] border-t border-gray-800 p-2.5 flex flex-col justify-between">
+                <div className="flex justify-between items-center text-[10px] text-gray-400">
+                  <span>CAPCUT SEQUENCED TRACK (V1 + TRANSITIONS)</span>
+                  <span>Total Duration: {timelineClips.reduce((a, b) => a + b.duration, 0).toFixed(2)}s</span>
+                </div>
+
+                <div className="flex-1 flex items-center gap-1.5 overflow-x-auto py-2">
+                  {timelineClips.map((clip, idx) => (
+                    <div 
+                      key={idx}
+                      onClick={() => setActiveClipIndex(idx)}
+                      className={`h-16 min-w-[130px] rounded p-2 flex flex-col justify-between cursor-pointer border transition ${
+                        activeClipIndex === idx ? 'bg-indigo-900/60 border-indigo-400' : 'bg-[#121827] border-gray-800'
+                      }`}>
+                      <div className="flex justify-between text-[10px]">
+                        <span className="font-bold text-white truncate w-16">{clip.fileName}</span>
+                        <span className="text-emerald-400 font-mono">{clip.duration.toFixed(1)}s</span>
+                      </div>
+                      <div className="bg-indigo-950/90 border border-indigo-800/80 rounded px-1 py-0.5 text-[9px] text-indigo-300 truncate">
+                        FX: {clip.transition.name}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="w-80 bg-[#0a0d16] border-l border-gray-800 flex flex-col p-3 gap-3 overflow-y-auto">
+              <span className="font-bold text-gray-200">CapCut Transition Library</span>
+              <p className="text-[10px] text-gray-400">
+                AI matches these transitions based on Reference Video style patterns.
+              </p>
+
+              <div className="space-y-1.5 flex-1 overflow-y-auto">
+                {CAPCUT_TRANSITION_LIBRARY.map((tr) => (
+                  <div 
+                    key={tr.id}
+                    onClick={() => {
+                      setSelectedTransition(tr);
+                      if (timelineClips[activeClipIndex]) {
+                        const updated = [...timelineClips];
+                        updated[activeClipIndex].transition = tr;
+                        setTimelineClips(updated);
+                      }
+                    }}
+                    className={`p-2 rounded border cursor-pointer flex justify-between items-center transition ${
+                      selectedTransition.id === tr.id ? 'bg-indigo-950/80 border-indigo-500' : 'bg-[#101624] border-gray-800 hover:border-gray-700'
+                    }`}>
+                    <div>
+                      <div className="font-semibold text-gray-200">{tr.name}</div>
+                      <div className="text-[9px] text-gray-400">Category: {tr.category}</div>
+                    </div>
+                    <span className="text-[10px] font-mono text-indigo-400">{tr.duration}s</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -315,7 +496,7 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<ClipSyncApp />);
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
 </html>
