@@ -7,7 +7,6 @@ class GoogleAiHub {
     this.apiVersion = 'v1beta';
   }
 
-  // Live model discovery jo aapki key ke hisab se sahi model dhoondhega
   async discoverModels(apiKey) {
     return new Promise((resolve) => {
       if (!apiKey) return resolve({ success: false, error: 'API key is required.' });
@@ -25,7 +24,7 @@ class GoogleAiHub {
           try {
             const data = JSON.parse(raw);
             if (data.error) {
-              return resolve({ success: false, error: data.error.message, code: data.error.code });
+              return resolve({ success: false, error: data.error.message });
             }
 
             const catalog = (data.models || []).map(m => {
@@ -40,14 +39,13 @@ class GoogleAiHub {
                 capabilities: {
                   generateContent: methods.includes('generateContent'),
                   videoUnderstanding: isVision
-                },
-                family: id
+                }
               };
             });
 
-            resolve({ success: true, models: catalog, timestamp: Date.now() });
+            resolve({ success: true, models: catalog });
           } catch (e) {
-            resolve({ success: false, error: 'Parse error: ' + e.message });
+            resolve({ success: false, error: e.message });
           }
         });
       });
@@ -57,31 +55,38 @@ class GoogleAiHub {
     });
   }
 
-  async executeTask({ apiKey, modelId, systemPrompt, userPrompt, mediaParts = [] }) {
-    // Step 1: Pehle check karo ki koi valid model di gayi hai ya nahi
-    let targetModel = modelId;
+  // MULTI-KEY SILENT FALLBACK EXECUTOR
+  async executeTask({ apiKeys, modelId, systemPrompt, userPrompt }) {
+    // Array filter out empty keys
+    const validKeys = (apiKeys || []).filter(k => k && k.trim() !== '');
+    if (validKeys.length === 0) {
+      return { success: false, error: 'Kam se kam 1 valid Google API Key honi chahiye!' };
+    }
 
-    // Step 2: Agar model nahi hai ya purana/deprecated hai, toh live discovery se active model uthao
-    if (!targetModel || targetModel.includes('2.5') || targetModel.includes('3.8')) {
-      const discovery = await this.discoverModels(apiKey);
-      if (discovery.success && discovery.models.length > 0) {
-        const validModel = discovery.models.find(m => m.capabilities.generateContent);
-        if (validModel) {
-          targetModel = validModel.id;
-        } else {
-          targetModel = discovery.models[0].id;
-        }
+    let lastError = '';
+
+    // Loop through all provided keys silently
+    for (let i = 0; i < validKeys.length; i++) {
+      const currentKey = validKeys[i];
+      let targetModel = modelId || 'gemini-1.5-flash';
+
+      const result = await this.singleKeyExecution(currentKey, targetModel, systemPrompt, userPrompt);
+      if (result.success) {
+        return { ...result, usedKeyIndex: i + 1 }; // Successfully executed using key i+1
       } else {
-        targetModel = 'gemini-1.5-flash'; // Ultimate fallback
+        lastError = result.error;
+        // Silent fallback: Continue to next key without showing alert to user
+        console.warn(`Key #${i + 1} failed. Silently switching to next API key...`);
       }
     }
 
+    // Agar teeno keys fail ho jayein tab hi error return karega
+    return { success: false, error: 'Sabhi API keys try kar li gayi hain. Last error: ' + lastError };
+  }
+
+  async singleKeyExecution(apiKey, targetModel, systemPrompt, userPrompt) {
     return new Promise((resolve) => {
       const parts = [{ text: userPrompt }];
-      if (mediaParts && mediaParts.length > 0) {
-        mediaParts.forEach(part => parts.push(part));
-      }
-
       const body = JSON.stringify({
         contents: [{ parts }],
         systemInstruction: systemPrompt ? { parts: [{ text: systemPrompt }] } : undefined,
@@ -112,7 +117,7 @@ class GoogleAiHub {
             const usage = parsed.usageMetadata || {};
             resolve({ success: true, text: textResponse, usage, usedModel: targetModel });
           } catch (e) {
-            resolve({ success: false, error: 'JSON parse error: ' + e.message });
+            resolve({ success: false, error: e.message });
           }
         });
       });
@@ -121,10 +126,6 @@ class GoogleAiHub {
       req.write(body);
       req.end();
     });
-  }
-
-  async queryLocalGemma(prompt, endpoint = 'http://localhost:11434/api/generate') {
-    return { success: false, error: 'Local offline' };
   }
 }
 
