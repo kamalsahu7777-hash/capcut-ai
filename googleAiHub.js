@@ -1,104 +1,143 @@
-async singleKeyExecution(apiKey, targetModel, systemPrompt, userPrompt, responseMimeType = null) {
-  let activeModel = targetModel || 'gemini-2.5-flash';
+const https = require('https');
+const http = require('http');
 
-  return new Promise((resolve) => {
-    // 1. Payload structure according to official Gemini API spec
-    const payload = {
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: userPrompt }]
-        }
-      ],
-      generationConfig: {
-        temperature: 0.2
-      }
-    };
+class GoogleAiHub {
+  constructor() {
+    this.baseUrl = 'generativelanguage.googleapis.com';
+    this.apiVersion = 'v1beta';
+  }
 
-    // Dedicated system instruction if provided
-    if (systemPrompt && systemPrompt.trim()) {
-      payload.system_instruction = {
-        parts: [{ text: systemPrompt.trim() }]
+  async discoverModels(apiKey) {
+    return new Promise((resolve) => {
+      if (!apiKey) return resolve({ success: false, error: 'API key is required.' });
+
+      const cleanKey = encodeURIComponent(apiKey.trim());
+      const options = {
+        hostname: this.baseUrl,
+        path: `/${this.apiVersion}/models?key=${cleanKey}`,
+        method: 'GET',
+        timeout: 10000
       };
-    }
 
-    // Dynamic mime type (agar JSON chahiye toh dynamically set karein)
-    if (responseMimeType) {
-      payload.generationConfig.responseMimeType = responseMimeType;
-    }
-
-    const body = JSON.stringify(payload);
-    const cleanKey = encodeURIComponent(apiKey.trim());
-
-    const options = {
-      hostname: this.baseUrl || 'generativelanguage.googleapis.com',
-      path: `/${this.apiVersion || 'v1beta'}/models/${activeModel}:generateContent?key=${cleanKey}`,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body)
-      },
-      timeout: 45000
-    };
-
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', chunk => raw += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(raw);
-
-          // API Error handling
-          if (parsed.error) {
-            return resolve({
-              success: false,
-              error: parsed.error.message || 'Gemini API Error',
-              code: parsed.error.code
-            });
-          }
-
-          const candidate = parsed.candidates?.[0];
-          const finishReason = candidate?.finishReason;
-
-          // Check if blocked by safety or other filters
-          if (finishReason && finishReason !== 'STOP') {
-            if (!candidate.content) {
-              return resolve({
-                success: false,
-                error: `Generation stopped due to: ${finishReason}`,
-                finishReason
-              });
+      const req = https.request(options, (res) => {
+        let raw = '';
+        res.on('data', chunk => raw += chunk);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(raw);
+            if (data.error) {
+              return resolve({ success: false, error: data.error.message });
             }
+
+            const catalog = (data.models || []).map(m => {
+              const id = m.name.replace('models/', '');
+              const methods = m.supportedGenerationMethods || [];
+              const isVision = id.includes('flash') || id.includes('pro') || id.includes('vision') || id.includes('gemini');
+
+              return {
+                id,
+                displayName: m.displayName || id,
+                methods,
+                capabilities: {
+                  generateContent: methods.includes('generateContent'),
+                  videoUnderstanding: isVision
+                }
+              };
+            });
+
+            resolve({ success: true, models: catalog });
+          } catch (e) {
+            resolve({ success: false, error: e.message });
           }
+        });
+      });
 
-          const textResponse = candidate?.content?.parts?.[0]?.text || '';
-          const usage = parsed.usageMetadata || {};
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ success: false, error: 'Connection timeout.' });
+      });
 
-          resolve({
-            success: true,
-            text: textResponse,
-            usage,
-            usedModel: activeModel,
-            finishReason
-          });
-        } catch (e) {
-          resolve({
-            success: false,
-            error: `JSON Parse error: ${e.message}`,
-            rawResponse: raw
-          });
+      req.on('error', (err) => resolve({ success: false, error: err.message }));
+      req.end();
+    });
+  }
+
+  async executeTask({ apiKeys, modelId, systemPrompt, userPrompt }) {
+    const validKeys = (apiKeys || []).filter(k => k && k.trim() !== '');
+    if (validKeys.length === 0) {
+      return { success: false, error: 'Kam se kam 1 valid Google API Key honi chahiye!' };
+    }
+
+    let lastError = '';
+
+    for (let i = 0; i < validKeys.length; i++) {
+      const currentKey = validKeys[i];
+      let targetModel = modelId || 'gemini-2.5-flash';
+
+      const result = await this.singleKeyExecution(currentKey, targetModel, systemPrompt, userPrompt);
+      if (result.success) {
+        return { ...result, usedKeyIndex: i + 1 };
+      } else {
+        lastError = result.error;
+      }
+    }
+
+    return { success: false, error: 'Sabhi API keys try kar li gayi hain. Last error: ' + lastError };
+  }
+
+  async singleKeyExecution(apiKey, targetModel, systemPrompt, userPrompt) {
+    let activeModel = targetModel || 'gemini-2.5-flash';
+
+    return new Promise((resolve) => {
+      const fullPrompt = systemPrompt ? `${systemPrompt}\n\nTask: ${userPrompt}` : userPrompt;
+      const parts = [{ text: fullPrompt }];
+
+      const body = JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: {
+          temperature: 0.2,
+          responseMimeType: "application/json"
         }
       });
+
+      const cleanKey = encodeURIComponent(apiKey.trim());
+      const options = {
+        hostname: this.baseUrl,
+        path: `/${this.apiVersion}/models/${activeModel}:generateContent?key=${cleanKey}`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        },
+        timeout: 45000
+      };
+
+      const req = https.request(options, (res) => {
+        let raw = '';
+        res.on('data', chunk => raw += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.error) return resolve({ success: false, error: parsed.error.message });
+            const textResponse = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const usage = parsed.usageMetadata || {};
+            resolve({ success: true, text: textResponse, usage, usedModel: activeModel });
+          } catch (e) {
+            resolve({ success: false, error: e.message });
+          }
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ success: false, error: 'AI Request timeout (45s exceeded).' });
+      });
+
+      req.on('error', err => resolve({ success: false, error: err.message }));
+      req.write(body);
+      req.end();
     });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ success: false, error: 'AI Request timeout (45s exceeded).' });
-    });
-
-    req.on('error', err => resolve({ success: false, error: err.message }));
-
-    req.write(body);
-    req.end();
-  });
+  }
 }
+
+module.exports = new GoogleAiHub();
