@@ -24,7 +24,10 @@
 
     function App() {
       const [currentTab, setCurrentTab] = useState('hub');
-      const [apiKey, setApiKey] = useState('');
+      
+      // State for 3 API keys
+      const [apiKeys, setApiKeys] = useState(['', '', '']);
+      
       const [modelCatalog, setModelCatalog] = useState([]);
       const [catalogSearch, setCatalogSearch] = useState('');
       const [hubStatus, setHubStatus] = useState({ text: 'Not Connected', ok: false });
@@ -32,7 +35,7 @@
       const [tokenUsage, setTokenUsage] = useState(null);
 
       const [routerConfig, setRouterConfig] = useState({
-        videoAnalysisModel: 'gemini-3.8-flash',
+        videoAnalysisModel: 'gemini-1.5-flash',
         vfxInstructionModel: 'gemini-1.5-flash',
         embeddingModel: '',
         useLocalGemma: false
@@ -54,17 +57,24 @@
 
       useEffect(() => {
         if (ipcRenderer) {
-          ipcRenderer.invoke('load-google-key').then(res => {
-            if (res.success && res.apiKey) {
-              setApiKey(res.apiKey);
-              discoverGoogleModels(res.apiKey);
+          ipcRenderer.invoke('load-google-keys').then(res => {
+            if (res.success && res.keys) {
+              setApiKeys(res.keys);
+              if (res.keys[0]) discoverGoogleModels(res.keys[0]);
             }
           });
         }
       }, []);
 
+      const handleSaveKeys = async () => {
+        if (!ipcRenderer) return;
+        await ipcRenderer.invoke('save-google-keys', { keys: apiKeys });
+        if (apiKeys[0]) discoverGoogleModels(apiKeys[0]);
+        alert('3on API Keys secure vault mein save ho gayi hain!');
+      };
+
       const discoverGoogleModels = async (keyToUse) => {
-        const key = keyToUse || apiKey;
+        const key = keyToUse || apiKeys[0];
         if (!key) return;
         setIsDiscovering(true);
         setHubStatus({ text: 'Fetching Official Google Catalog...', ok: false });
@@ -92,12 +102,6 @@
         setIsDiscovering(false);
       };
 
-      const handleSaveKey = async () => {
-        if (!ipcRenderer) return;
-        await ipcRenderer.invoke('save-google-key', { apiKey });
-        discoverGoogleModels(apiKey);
-      };
-
       const handleImportFolders = async () => {
         if (!ipcRenderer) return;
         const res = await ipcRenderer.invoke('select-folders', { includeSubfolders });
@@ -121,9 +125,10 @@
       };
 
       const handleAnalyzeEffects = async () => {
-        if (!apiKey) {
+        const activeKeys = apiKeys.filter(k => k && k.trim() !== '');
+        if (activeKeys.length === 0) {
           setCurrentTab('hub');
-          alert('Pehle Google AI Hub mein API key connect kijiye!');
+          alert('Pehle Google AI Hub mein kam se kam 1 API key enter kijiye!');
           return;
         }
 
@@ -143,7 +148,7 @@
           }
         }
 
-        const targetModel = routerConfig.videoAnalysisModel || 'gemini-3.8-flash';
+        const targetModel = routerConfig.videoAnalysisModel || 'gemini-1.5-flash';
 
         const systemPrompt = `You are Google AI Video VFX Analyzer. Analyze the provided video timing and create a precise list of visual effects for CapCut recreation.
 Return ONLY valid JSON matching this schema:
@@ -168,7 +173,7 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
 
         if (ipcRenderer) {
           const res = await ipcRenderer.invoke('hub-execute-task', {
-            apiKey,
+            apiKeys, // Passing all 3 keys for silent auto-fallback rotation
             modelId: targetModel,
             systemPrompt,
             userPrompt
@@ -343,27 +348,43 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
               <div className="w-96 flex flex-col gap-4">
                 <div className="bg-[#0e1322] border border-gray-800 rounded-lg p-3.5 space-y-3">
                   <div className="flex justify-between items-center">
-                    <span className="font-bold text-gray-200">Google AI Credentials</span>
-                    <span className="text-[10px] text-gray-400">Secure Local Vault</span>
+                    <span className="font-bold text-gray-200">Google AI Multi-Key Vault</span>
+                    <span className="text-[10px] text-emerald-400">Silent Auto-Fallback</span>
                   </div>
+                  
                   <input 
                     type="password"
-                    placeholder="Enter Google API Key (AIzaSy...)"
-                    value={apiKey}
-                    onChange={e => setApiKey(e.target.value)}
-                    className="w-full bg-[#070912] border border-gray-700 rounded px-2.5 py-1.5 text-xs text-white"
+                    placeholder="Primary API Key (Key 1)"
+                    value={apiKeys[0]}
+                    onChange={e => { const k = [...apiKeys]; k[0] = e.target.value; setApiKeys(k); }}
+                    className="w-full bg-[#070912] border border-gray-700 rounded px-2.5 py-1 text-xs text-white"
                   />
-                  <div className="flex gap-2">
+                  <input 
+                    type="password"
+                    placeholder="Backup API Key 2 (Silent Fallback)"
+                    value={apiKeys[1]}
+                    onChange={e => { const k = [...apiKeys]; k[1] = e.target.value; setApiKeys(k); }}
+                    className="w-full bg-[#070912] border border-gray-700 rounded px-2.5 py-1 text-xs text-white"
+                  />
+                  <input 
+                    type="password"
+                    placeholder="Backup API Key 3 (Silent Fallback)"
+                    value={apiKeys[2]}
+                    onChange={e => { const k = [...apiKeys]; k[2] = e.target.value; setApiKeys(k); }}
+                    className="w-full bg-[#070912] border border-gray-700 rounded px-2.5 py-1 text-xs text-white"
+                  />
+
+                  <div className="flex gap-2 pt-1">
                     <button 
-                      onClick={handleSaveKey}
+                      onClick={handleSaveKeys}
                       className="flex-1 bg-indigo-600 hover:bg-indigo-500 font-bold py-1.5 rounded text-white">
-                      Save & Test Key
+                      Save All 3 Keys
                     </button>
                     <button 
-                      onClick={() => discoverGoogleModels(apiKey)}
+                      onClick={() => discoverGoogleModels(apiKeys[0])}
                       disabled={isDiscovering}
                       className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded border border-gray-700">
-                      {isDiscovering ? 'Scanning...' : '🔄 Refresh Models'}
+                      {isDiscovering ? 'Scanning...' : '🔄 Refresh'}
                     </button>
                   </div>
                 </div>
@@ -411,7 +432,6 @@ Detect energetic cuts, speed ramping, zoom transitions, whip pans, white flashes
                             {m.family}
                           </span>
                         </div>
-                        <p className="text-[10px] text-gray-400 max-w-xl truncate">{m.description || 'Google Generative Language Model'}</p>
                       </div>
                     </div>
                   ))}
