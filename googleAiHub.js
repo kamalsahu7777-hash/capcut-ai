@@ -7,6 +7,7 @@ class GoogleAiHub {
     this.apiVersion = 'v1beta';
   }
 
+  // Live model discovery jo aapki key ke hisab se sahi model dhoondhega
   async discoverModels(apiKey) {
     return new Promise((resolve) => {
       if (!apiKey) return resolve({ success: false, error: 'API key is required.' });
@@ -30,22 +31,17 @@ class GoogleAiHub {
             const catalog = (data.models || []).map(m => {
               const id = m.name.replace('models/', '');
               const methods = m.supportedGenerationMethods || [];
-              const isVision = id.includes('flash') || id.includes('pro') || id.includes('vision');
-              const isEmbedding = methods.includes('embedContent') || id.includes('embedding');
+              const isVision = id.includes('flash') || id.includes('pro') || id.includes('vision') || id.includes('gemini');
 
               return {
                 id,
                 displayName: m.displayName || id,
-                description: m.description || '',
-                inputTokenLimit: m.inputTokenLimit || 0,
                 methods,
                 capabilities: {
                   generateContent: methods.includes('generateContent'),
-                  embedContent: isEmbedding,
                   videoUnderstanding: isVision
                 },
-                family: this.classifyFamily(id),
-                status: 'Active'
+                family: id
               };
             });
 
@@ -61,29 +57,24 @@ class GoogleAiHub {
     });
   }
 
-  classifyFamily(modelId) {
-    const id = modelId.toLowerCase();
-    if (id.includes('embedding')) return 'Embedding';
-    if (id.includes('pro')) return 'Gemini Pro';
-    return 'Gemini Flash';
-  }
-
   async executeTask({ apiKey, modelId, systemPrompt, userPrompt, mediaParts = [] }) {
+    // Step 1: Pehle check karo ki koi valid model di gayi hai ya nahi
     let targetModel = modelId;
-    
-    // Agar modelId pass nahi hua ya purana/deprecated hai, toh live list se pehla active model nikal lo
-    if (!targetModel || targetModel.includes('2.5') || targetModel.includes('3.8') || targetModel.includes('1.5')) {
+
+    // Step 2: Agar model nahi hai ya purana/deprecated hai, toh live discovery se active model uthao
+    if (!targetModel || targetModel.includes('2.5') || targetModel.includes('3.8')) {
       const discovery = await this.discoverModels(apiKey);
       if (discovery.success && discovery.models.length > 0) {
-        const validModel = discovery.models.find(m => m.capabilities.generateContent && m.capabilities.videoUnderstanding);
+        const validModel = discovery.models.find(m => m.capabilities.generateContent);
         if (validModel) {
           targetModel = validModel.id;
         } else {
           targetModel = discovery.models[0].id;
         }
+      } else {
+        targetModel = 'gemini-1.5-flash'; // Ultimate fallback
       }
     }
-    if (!targetModel) targetModel = 'gemini-pro';
 
     return new Promise((resolve) => {
       const parts = [{ text: userPrompt }];
