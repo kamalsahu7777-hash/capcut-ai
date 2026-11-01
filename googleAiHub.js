@@ -16,7 +16,7 @@ class GoogleAiHub {
         hostname: this.baseUrl,
         path: `/${this.apiVersion}/models?key=${cleanKey}`,
         method: 'GET',
-        timeout: 6000
+        timeout: 10000
       };
 
       const req = https.request(options, (res) => {
@@ -72,7 +72,7 @@ class GoogleAiHub {
 
     for (let i = 0; i < validKeys.length; i++) {
       const currentKey = validKeys[i];
-      let targetModel = modelId || 'gemini-3.8-flash';
+      let targetModel = modelId || 'gemini-1.5-flash';
 
       const result = await this.singleKeyExecution(currentKey, targetModel, systemPrompt, userPrompt);
       if (result.success) {
@@ -86,10 +86,8 @@ class GoogleAiHub {
   }
 
   async singleKeyExecution(apiKey, targetModel, systemPrompt, userPrompt) {
-    let activeModel = targetModel;
-    if (!activeModel || activeModel.includes('2.5') || activeModel.includes('1.5') || activeModel.includes('pro')) {
-      activeModel = 'gemini-3.8-flash';
-    }
+    // Using gemini-1.5-flash as the rock-solid stable target model
+    let activeModel = 'gemini-1.5-flash';
 
     return new Promise((resolve) => {
       const fullPrompt = systemPrompt ? `${systemPrompt}\n\nTask: ${userPrompt}` : userPrompt;
@@ -112,7 +110,7 @@ class GoogleAiHub {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body)
         },
-        timeout: 10000
+        timeout: 45000 // Increased timeout to 45 seconds for stable processing
       };
 
       const req = https.request(options, (res) => {
@@ -133,7 +131,7 @@ class GoogleAiHub {
 
       req.on('timeout', () => {
         req.destroy();
-        resolve({ success: false, error: 'AI Request timeout.' });
+        resolve({ success: false, error: 'AI Request timeout (45s exceeded).' });
       });
 
       req.on('error', err => resolve({ success: false, error: err.message }));
