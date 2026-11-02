@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
 
+interface Job {
+  id: string;
+  name: string;
+  status: string;
+  progress: number;
+}
+
 export default function RenderDashboard() {
-  const [queue, setQueue] = useState([
+  const [queue] = useState<Job[]>([
     { id: '1', name: 'ClipSync_Project_1.mp4', status: 'queued', progress: 0 }
   ]);
-  const [currentVideo, setCurrentVideo] = useState(null);
+  const [currentVideo] = useState<string | null>(null);
 
   return (
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#111827', color: '#fff', padding: '20px', fontFamily: 'sans-serif', boxSizing: 'border-box' }}>
