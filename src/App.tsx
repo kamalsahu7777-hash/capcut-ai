@@ -1,3 +1,5 @@
+import RenderDashboard from './components/RenderDashboard';
+<RenderDashboard />
 import React, { useState } from 'react';
 
 export default function App() {
